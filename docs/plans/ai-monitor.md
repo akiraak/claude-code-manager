@@ -187,6 +187,16 @@ MVP 完了後に着手する。
 - **結合**: vibeboard と AI Monitor を両方立ち上げ、`claude` プロセスを 2 つ起動 → タブからプロセスをクリック → 右ペインに transcript 末尾が表示 → 片方で何か実行して jsonl が更新されたら SSE 経由で自動更新される
 - **異常系**: claude プロセスが 0 個でも UI が空状態を素直に出す、jsonl が壊れた行を含んでも落ちない、AI Monitor サーバ未起動でも vibeboard 側がタブをクラッシュさせず "接続できません" を表示する
 
+## Phase 2 完了メモ (2026-05-12)
+
+- 配置は `./ai-monitor/` (新規ディレクトリ) で確定。`src/{cli,server,processes,transcript,state,views}.ts` の 6 ファイル構成。
+- 起動: `(cd ai-monitor && npm install && npm run build)` 後に `node ai-monitor/dist/cli.js --port 8181`。`run-ai-monitor.sh` は Phase 4 で用意する。
+- プロセス特定は `pgrep -af claude` → `/proc/<PID>/comm` で本物の `claude` だけに絞り、`/proc/<PID>/cmdline` の argv[0] basename を保険にしてある (npm exec 経由などで comm が `node` になる場合への対応)。自分自身 (ai-monitor) の PID は明示的に除外。
+- jsonl 検出は `~/.claude/projects/*/` 配下で最新の `.jsonl` を選び、行末から `cwd` フィールドを取り出して PID と突き合わせる方式 (プラン通り)。tail 読みは末尾 256KB / 1MB を `fs.readSync` で取る軽量実装。
+- SSE は 2 秒ポーリングで「サイドバー指紋 (cwd+PID+state) の差分」→ `sidebar` イベント、「jsonl mtime 変化」→ `item-changed` (該当 proc と `dashboard` の両方) を push する。30 秒 keep-alive ping 付き。
+- アイドル判定: 30 秒以内 = active / 5 分以内 = recent / それ以上 = idle (プラン通り)。サイドバーバッジは `●◐○`、ダッシュボードは色付きチップで表示。
+- 検証: `curl /api/sidebar` で 3 件の稼働中 CLI を確認、`/view?item=dashboard` / `/view?item=proc:<base64url>` が 200 で返ることを確認、jsonl を `touch` すると `item-changed` が SSE で飛ぶことを確認 (vibeboard との結合確認は Phase 4 で `vibeboard.config.json` に customTabs を追記してから実施)。
+
 ## 確定事項 / 検討メモ
 
 - **vibeboard の取り込み方針**: 本リポに fork として取り込み、`.gitignore` から外して直接コミットする (Step 1.5)。upstream への PR は別件で後回し。

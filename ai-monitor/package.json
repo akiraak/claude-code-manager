@@ -1,0 +1,28 @@
+{
+  "name": "ai-monitor",
+  "version": "0.1.0",
+  "description": "稼働中の Claude Code CLI を可視化する vibeboard customTabs プラグイン",
+  "private": true,
+  "license": "Unlicense",
+  "main": "dist/server.js",
+  "bin": {
+    "ai-monitor": "dist/cli.js"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "scripts": {
+    "build": "tsc",
+    "start": "node dist/cli.js",
+    "dev": "ts-node src/cli.ts"
+  },
+  "dependencies": {
+    "express": "^4.21.2"
+  },
+  "devDependencies": {
+    "@types/express": "^5.0.0",
+    "@types/node": "^22.10.0",
+    "ts-node": "^10.9.2",
+    "typescript": "^5.7.0"
+  }
+}
