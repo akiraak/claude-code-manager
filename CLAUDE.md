@@ -29,31 +29,33 @@ upstream への反映は後追いで行う。
 ```bash
 # 親プロジェクト直下から（初回のみ依存をインストール / ビルド）
 (cd vibeboard && npm install && npm run build)
-./run-vibeboard.sh
+(cd ai-monitor && npm install && npm run build)
+# 起動は run-ai-monitor.sh が vibeboard + AI Monitor をまとめて立ち上げる
+./run-ai-monitor.sh
 ```
 
-`http://localhost:3010` でプロジェクト直下の `docs/plans/`・`docs/specs/`・`TODO.md`・`DONE.md` を閲覧・編集できる。
+`http://localhost:8180` でプロジェクト直下の `docs/plans/`・`docs/specs/`・`TODO.md`・`DONE.md` を閲覧・編集できる。
 
 - `TODO` タブで `TODO.md` / `DONE.md` をプレビュー表示・編集できる
   - 編集は楽観ロック（mtime チェック）付き。外部で先に更新されていた場合は保存時に 409 を返し、リロード / 手元維持 / 強制上書き を選べる
   - `fs.watch` + 2 秒ポーリングで外部変更を検知し、SSE でクライアントへ即時反映する
 - ローカル開発専用（本番管理画面とは独立）
-- ポート変更は `--port` または `VIBEBOARD_PORT` 環境変数で指定可能
+- ポート変更は `VIBEBOARD_PORT` 環境変数で指定可能（デフォルト 8180）
 
 ## AI Monitor (vibeboard customTabs プラグイン)
 
-稼働中の Claude Code CLI を vibeboard 上で可視化するためのサーバ。`./ai-monitor/` に実装があり、vibeboard とは別プロセスとして起動する。
+稼働中の Claude Code CLI を vibeboard 上で可視化するためのサーバ。`./ai-monitor/` に実装がある。`run-ai-monitor.sh` が vibeboard と一緒に起動する（別プロセス）。
 
 ```bash
 # 初回のみ依存をインストール / ビルド
 (cd ai-monitor && npm install && npm run build)
-# 起動 (デフォルト port 8181, 127.0.0.1 バインド)
+# 起動 (vibeboard 8180 + ai-monitor 8181 をまとめて立ち上げる)
 ./run-ai-monitor.sh
 ```
 
 - `vibeboard.config.json` の `customTabs` に AI Monitor のエントリ（`baseUrl: http://127.0.0.1:8181`）を登録済み。vibeboard 起動時に **AI Monitor** タブとして読み込まれる
-- vibeboard と AI Monitor は別ターミナルで両方とも起動しておく（`run-vibeboard.sh` と `run-ai-monitor.sh`）
-- ポート変更は `--port` で指定可能。変更した場合は `vibeboard.config.json` の `baseUrl` も合わせる
+- `run-ai-monitor.sh` は既に起動中の vibeboard / ai-monitor を `pgrep -f` で検出し、停止してから起動し直す
+- ポート変更は `VIBEBOARD_PORT` / `AI_MONITOR_PORT` 環境変数で指定可能。AI Monitor 側を変えた場合は `vibeboard.config.json` の `baseUrl` も合わせる
 - 読み取り専用。`~/.claude/projects/*/*.jsonl` と `/proc` のみを参照し、書き込み API は持たない
 
 ## タスク管理ルール
