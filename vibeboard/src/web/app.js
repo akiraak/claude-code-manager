@@ -1096,9 +1096,9 @@ function handleRoute() {
 function buildTabs() {
   topbarTabs.innerHTML = '';
   const tabs = [
+    ...CUSTOM_TABS.map(t => ({ name: t.name, label: t.label })),
     { name: EDITABLE_TAB, label: EDITABLE_LABEL },
     ...CATEGORY_DEFS.map(c => ({ name: c.name, label: c.label })),
-    ...CUSTOM_TABS.map(t => ({ name: t.name, label: t.label })),
   ];
   for (const t of tabs) {
     const btn = document.createElement('button');

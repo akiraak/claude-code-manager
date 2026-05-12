@@ -1,5 +1,6 @@
 # DONE
 
+- 2026-05-12: AI Monitor タブを vibeboard メニューの一番左に配置
 - 2026-05-12: 現在動いているclaude code cliの状況をvibeboardに表示 ([plan](docs/plans/archive/ai-monitor.md))
     - Phase 1: vibeboard 拡張機構 (customTabs)
     - Phase 2: AI Monitor サーバ実装
