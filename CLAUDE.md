@@ -40,6 +40,22 @@ upstream への反映は後追いで行う。
 - ローカル開発専用（本番管理画面とは独立）
 - ポート変更は `--port` または `VIBEBOARD_PORT` 環境変数で指定可能
 
+## AI Monitor (vibeboard customTabs プラグイン)
+
+稼働中の Claude Code CLI を vibeboard 上で可視化するためのサーバ。`./ai-monitor/` に実装があり、vibeboard とは別プロセスとして起動する。
+
+```bash
+# 初回のみ依存をインストール / ビルド
+(cd ai-monitor && npm install && npm run build)
+# 起動 (デフォルト port 8181, 127.0.0.1 バインド)
+./run-ai-monitor.sh
+```
+
+- `vibeboard.config.json` の `customTabs` に AI Monitor のエントリ（`baseUrl: http://127.0.0.1:8181`）を登録済み。vibeboard 起動時に **AI Monitor** タブとして読み込まれる
+- vibeboard と AI Monitor は別ターミナルで両方とも起動しておく（`run-vibeboard.sh` と `run-ai-monitor.sh`）
+- ポート変更は `--port` で指定可能。変更した場合は `vibeboard.config.json` の `baseUrl` も合わせる
+- 読み取り専用。`~/.claude/projects/*/*.jsonl` と `/proc` のみを参照し、書き込み API は持たない
+
 ## タスク管理ルール
 
 - タスクは `TODO.md` で管理する

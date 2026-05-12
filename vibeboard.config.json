@@ -1,5 +1,5 @@
 {
   "customTabs": [
-    { "name": "sample", "label": "Sample", "baseUrl": "http://127.0.0.1:8281" }
+    { "name": "ai-monitor", "label": "AI Monitor", "baseUrl": "http://127.0.0.1:8181" }
   ]
 }
