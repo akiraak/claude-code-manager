@@ -6,7 +6,7 @@
     - 右ペイン
       - ダッシュボードには稼働中Claude Code Cliの情報の簡単な表示
       - プロセスには詳細表示
-    - [ ] Phase 1: vibeboard 拡張機構 (customTabs)
+    - [x] Phase 1: vibeboard 拡張機構 (customTabs)
     - [ ] Phase 2: AI Monitor サーバ実装
     - [ ] Phase 3: AI Monitor フロント (Dashboard / Process 詳細)
     - [ ] Phase 4: 起動・運用 (run-ai-monitor.sh / README)

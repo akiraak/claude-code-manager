@@ -1,35 +1,11 @@
-# claude-code-manager
-
-複数の Claude Code CLI 実行を一元管理するためのシステム。
-
-## 目的
-
-複数の Claude Code CLI を同時に走らせていると、「どの CLI が何をやっていたか」がすぐに分からなくなり混乱する。
-本プロジェクトはその混乱を防ぐための管理基盤を提供する。
-
-## システム要件
-
-- **Web ページで閲覧できる**: 各 CLI の状況をブラウザから確認できる UI を持つ
-- **Claude Code CLI 毎に表示する**: 起動中／実行履歴のある CLI ごとに区分けして表示する
-- **ユーザーコマンドと AI 応答を見やすく表示**: ユーザーが投入したプロンプトと、Claude からの応答（ツール呼び出しを含む）を時系列で読みやすく描画する
-- **情報量が多いものは AI で要約**: ログや出力が長くなった場合、AI を使って要約表示し、必要に応じて原文も参照できるようにする
-
-## 用語
-
-- **CLI セッション**: 1 つの `claude` プロセスの起動から終了までの単位
-- **ターン**: ユーザー入力と、それに対する AI の応答（ツール呼び出し含む）の往復 1 回分
-
-<!-- vibeboard:begin -->
 ## 開発管理画面 (vibeboard)
 
 ローカル開発時のタスク・プラン管理は [vibeboard](https://github.com/akiraak/vibeboard) で行う。
-upstream を本リポに fork として取り込み済み（`./vibeboard/`）。改修は本リポで直接コミットする。
-upstream への反映は後追いで行う。
+プロジェクト直下に degit で vendor してある（`./vibeboard/`）。
 
 ```bash
-# 親プロジェクト直下から（初回のみ依存をインストール / ビルド）
-(cd vibeboard && npm install && npm run build)
-./run-vibeboard.sh
+# 親プロジェクト直下から
+node vibeboard/dist/cli.js --root .
 ```
 
 `http://localhost:3010` でプロジェクト直下の `docs/plans/`・`docs/specs/`・`TODO.md`・`DONE.md` を閲覧・編集できる。
@@ -65,4 +41,3 @@ upstream への反映は後追いで行う。
 4. **作業完了時の後片付け**
    - 親タスクを `DONE.md` に移動する
    - 対応するプランファイルは `docs/plans/archive/` に移動する
-<!-- vibeboard:end -->

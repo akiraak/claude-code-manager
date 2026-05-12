@@ -4,8 +4,8 @@ set -euo pipefail
 cd "$(dirname "$0")"
 
 if [ ! -f vibeboard/dist/cli.js ]; then
-  echo "vibeboard が見つかりません。先にセットアップしてください:" >&2
-  echo "  npx -y degit akiraak/vibeboard vibeboard && (cd vibeboard && npm install)" >&2
+  echo "vibeboard/dist が見つかりません。先にビルドしてください:" >&2
+  echo "  (cd vibeboard && npm install && npm run build)" >&2
   exit 1
 fi
 

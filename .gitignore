@@ -1,1 +1,3 @@
-vibeboard/
+vibeboard/node_modules/
+vibeboard/dist/
+node_modules/
