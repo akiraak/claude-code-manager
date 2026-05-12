@@ -156,6 +156,23 @@ function renderEvent(ev: NormalizedEvent): string {
   </div>`;
 }
 
+const PROCESS_VIEW_SCRIPT = `
+(function() {
+  function scrollToBottom() {
+    var h = Math.max(
+      document.documentElement.scrollHeight,
+      document.body ? document.body.scrollHeight : 0
+    );
+    window.scrollTo(0, h);
+  }
+  if (document.readyState === 'complete') {
+    scrollToBottom();
+  } else {
+    window.addEventListener('load', scrollToBottom);
+  }
+})();
+`;
+
 export function renderProcessView(entry: MonitorEntry): string {
   const events = entry.transcript ? readTailEvents(entry.transcript.jsonlPath, 200) : [];
   const lastActivityLabel = entry.lastActivityAt
@@ -180,6 +197,7 @@ export function renderProcessView(entry: MonitorEntry): string {
     jsonl はターン完了時にしか書き出されないため、進行中ターンの本文はここには出ません。
   </div>
   ${eventsHtml}
+  <script>${PROCESS_VIEW_SCRIPT}</script>
 </body></html>`;
 }
 
