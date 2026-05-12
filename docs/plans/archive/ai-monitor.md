@@ -197,6 +197,28 @@ MVP 完了後に着手する。
 - アイドル判定: 30 秒以内 = active / 5 分以内 = recent / それ以上 = idle (プラン通り)。サイドバーバッジは `●◐○`、ダッシュボードは色付きチップで表示。
 - 検証: `curl /api/sidebar` で 3 件の稼働中 CLI を確認、`/view?item=dashboard` / `/view?item=proc:<base64url>` が 200 で返ることを確認、jsonl を `touch` すると `item-changed` が SSE で飛ぶことを確認 (vibeboard との結合確認は Phase 4 で `vibeboard.config.json` に customTabs を追記してから実施)。
 
+## Phase 3 完了メモ (2026-05-12)
+
+- Step 3.1〜3.3 はすでに Phase 2 で `ai-monitor/src/views.ts` に実装済み (Dashboard テーブル、Process 詳細の時系列リスト、tool_result 折り畳み、末尾 200 行制限、注記)。Phase 3 では Step 3.4 のみを追加した。
+- Step 3.4 (自動スクロール): `renderProcessView` の HTML 末尾に小さなインライン `<script>` を埋め、ロード完了時に `document.documentElement.scrollHeight` まで `window.scrollTo` する実装にした。
+  - vibeboard 側はすでに `item-changed` 受信で `iframe.src` を再代入する仕組み (`vibeboard/src/web/app.js` の `customTabState.iframe.src = buildCustomTabSrc(...)`) なので、iframe が完全リロードされ、その都度この script が走って末尾追従する。
+  - Dashboard 側は通常スクロールが発生しないので、script は Process 詳細にだけ入れた。
+  - 既知の MVP 制約: ユーザが過去ログを読んでいる最中に jsonl が更新されると iframe が再ロードされて末尾に飛ばされる。プラン記載の「最下部にスクロール」要件通りの素直な実装に留めた。「下端付近にいるときだけ追従」など、スクロール位置を保つ拡張は将来 Phase で検討余地。
+- 検証: `port 8182` で起動し、`/api/sidebar` で 3 件、`/view?item=proc:<id>` の末尾に `scrollToBottom` script が含まれていること、active プロセスのビューに 55 イベント分のカードが描画されることを `curl` で確認。
+
+## Phase 4 完了メモ (2026-05-12)
+
+- Step 4.1: `./run-ai-monitor.sh` を新設。`run-vibeboard.sh` と同じ構造で、`ai-monitor/dist/cli.js` が無ければビルドを促し、デフォルト `--port 8181` を補ってから `exec node` で起動する。`chmod +x` 済み。
+- Step 4.2:
+  - `README.md` を 1 行から「構成 / セットアップ / 起動 / vibeboard.config.json / 同時起動 / 詳細リンク」にリライト。`concurrently` で 1 コマンド起動する例も載せた。
+  - `CLAUDE.md` の vibeboard セクション直後に「AI Monitor」セクションを追加。インストール手順 / 起動 / customTabs 登録済みの旨 / 読み取り専用である旨を明記。
+  - `vibeboard.config.json` の `customTabs` を sample から `ai-monitor`（`http://127.0.0.1:8181`）に差し替え。これで vibeboard 起動時に AI Monitor タブが自動で出る。
+- Step 4.3: `.gitignore` は Phase 2 時点で `ai-monitor/node_modules/` と `ai-monitor/dist/` を追加済みのため、確認のみ。
+- 検証:
+  - `./run-ai-monitor.sh --port 8183` で AI Monitor が起動し、`/api/sidebar` が Dashboard + 3 件の稼働中 CLI を返す、`/view?item=dashboard` / `/view?item=proc:<base64url>` が 200 を返すことを `curl` で確認。
+  - `./run-vibeboard.sh --port 3019` で vibeboard を起動し、トップページ HTML に `customTab`・`ai-monitor`・`8181` がインライン埋め込みされていることを確認（clientConfig 経由で正しく流れている）。
+- Phase 5（AI 要約）は本プラン外。着手時に `docs/plans/ai-monitor-summarize.md` を別途切り出す。
+
 ## 確定事項 / 検討メモ
 
 - **vibeboard の取り込み方針**: 本リポに fork として取り込み、`.gitignore` から外して直接コミットする (Step 1.5)。upstream への PR は別件で後回し。
