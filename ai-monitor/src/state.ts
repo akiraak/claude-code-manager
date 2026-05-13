@@ -16,6 +16,11 @@ import {
  *
  * 自動では呼ばずに、UI の「要約」ボタン押下時にだけ計算するため、
  * ここでは `peek` と `isInflight` だけを覗いて idle/pending/cached を出し分ける。
+ *
+ * キャッシュは `jsonlPath` 単位なので、生成時の mtime と現在の mtime が
+ * ずれていた場合は古いまま残っているということ。本文を消すと「表示済みの
+ * 要約がボタンに戻る」体験になるので、結果は返したまま `stale: true` を
+ * 立てて UI に色違いを依頼する。
  */
 function readSummaryStatus(
   summarizer: Summarizer,
@@ -23,9 +28,12 @@ function readSummaryStatus(
   mtimeMs: number,
 ): SummaryResult {
   if (!summarizer.isEnabled()) return { state: 'unavailable' };
-  const cached = summarizer.peek(jsonlPath, mtimeMs);
-  if (cached) return cached;
-  if (summarizer.isInflight(jsonlPath, mtimeMs)) return { state: 'pending' };
+  const cached = summarizer.peek(jsonlPath);
+  if (cached) {
+    const stale = cached.mtimeMs !== mtimeMs;
+    return stale ? { ...cached.result, stale: true } : cached.result;
+  }
+  if (summarizer.isInflight(jsonlPath)) return { state: 'pending' };
   return { state: 'idle' };
 }
 

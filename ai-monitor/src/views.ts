@@ -147,6 +147,8 @@ h1 { font-size: 18px; margin: 0 0 12px; }
 .card-summary:empty { display: none; }
 .card-summary-muted { color: #999; font-style: italic; }
 .card-summary-pending { color: #888; }
+.card-summary-stale { color: #888; }
+.card-summary-stale .card-summary-text { color: #888; }
 .card-summary-icon { flex: 0 0 auto; }
 .card-summary-content {
   flex: 1 1 auto;
@@ -393,10 +395,12 @@ function renderSummaryFromData(data: DashboardCardData): string {
   if (!summary) return '';
   if (summary.state === 'ok' && summary.text) {
     const key = summaryHashKey(summary.text);
-    return `<div class="card-summary" data-collapsible data-summary-key="${escapeHtml(key)}">`
+    const staleClass = summary.stale ? ' card-summary-stale' : '';
+    const label = summary.stale ? '要約 (古い): ' : '要約: ';
+    return `<div class="card-summary${staleClass}" data-collapsible data-summary-key="${escapeHtml(key)}">`
       + `<span class="card-summary-icon">📝</span>`
       + `<div class="card-summary-content">`
-      + `<span class="card-summary-text">要約: ${escapeHtml(summary.text)}</span>`
+      + `<span class="card-summary-text">${label}${escapeHtml(summary.text)}</span>`
       + `<button type="button" class="card-summary-toggle" data-summary-toggle hidden>展開</button>`
       + `</div>`
       + `</div>`;
@@ -600,10 +604,12 @@ const DASHBOARD_LIVE_SCRIPT = `
     if (!s) return '';
     if (s.state === 'ok' && s.text) {
       var key = summaryHashKey(s.text);
-      return '<div class="card-summary" data-collapsible data-summary-key="' + esc(key) + '">'
+      var staleClass = s.stale ? ' card-summary-stale' : '';
+      var label = s.stale ? '要約 (古い): ' : '要約: ';
+      return '<div class="card-summary' + staleClass + '" data-collapsible data-summary-key="' + esc(key) + '">'
         + '<span class="card-summary-icon">📝</span>'
         + '<div class="card-summary-content">'
-        + '<span class="card-summary-text">要約: ' + esc(s.text) + '</span>'
+        + '<span class="card-summary-text">' + label + esc(s.text) + '</span>'
         + '<button type="button" class="card-summary-toggle" data-summary-toggle hidden>展開</button>'
         + '</div>'
         + '</div>';

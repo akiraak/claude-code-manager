@@ -1,5 +1,11 @@
 # DONE
 
+- 2026-05-13: 要約キャッシュキーを `jsonlPath` 単位に変更（jsonl 更新時も表示が消えなくなる）([plan](docs/plans/archive/summary-cache-by-jsonl.md))
+    - 旧実装は `Summarizer` の cache を `${jsonlPath}@${mtimeMs}` 複合キーで持っていたため、Claude Code CLI が 1 行追記するたび peek が miss し、ダッシュボード上の要約テキストが消えて「要約」ボタンに戻っていた
+    - cache を `Map<jsonlPath, { result, mtimeMs }>` に変更。`peek(jsonlPath)` は mtime に関係なく最後の結果を返し、`isInflight(jsonlPath)` も jsonl 単位に。`getOrCompute(jsonlPath, mtimeMs, input)` は `cached.mtimeMs === mtimeMs` のときだけキャッシュ据え置き、ずれていれば再計算開始
+    - `SummaryResult` に `stale?: boolean` を追加。`readSummaryStatus` で `cached.mtimeMs !== mtimeMs` のときに立てる。inflight 中でも cached があれば古いまま表示（再計算中に空白にしない）
+    - views.ts: `.card-summary-stale` CSS（`#888`）を追加。`renderSummaryFromData` / `DASHBOARD_LIVE_SCRIPT renderSummary` 両方で `state==='ok' && stale` のとき `card-summary-stale` クラスと「要約 (古い): 」プレフィックスを出す。`data-summary-key` は本文 hash のままなので展開状態は維持される
+    - `views.test.ts` に stale 表示のテスト 1 ケース追加。計 28 / 28 通過
 - 2026-05-13: ダッシュボードを「起動中」と「停止」で分けて表示する ([plan](docs/plans/archive/dashboard-split-running-stopped.md))
     - 旧実装は `buildEntries` の結果を 1 つのグリッドに cwd 順で並べていたため、24h retention で増えた停止カードと稼働中 CLI が混在し、稼働中をひと目で把握しづらかった
     - `renderDashboard` を 2 セクション (`data-section="running"` / `data-section="stopped"`) 構成に変更。state !== 'stopped' を起動中、'stopped' を停止に振り分け、両セクションとも cwd 順を維持。各セクションは独立した `<div class="cards" data-cards-running>` / `<div class="cards" data-cards-stopped>` を持つ

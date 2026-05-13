@@ -16,12 +16,6 @@
   - [x] Phase 2-E: `views.test.ts` に新 OK ブランチの DOM 構造テストを追加
 - [ ] (上記 2 タスク共通) Phase 3 手動確認: ツール往復 30 回以上のセッションで要約に直近ユーザー入力が反映されること / 展開 / 折りたたみ / SSE 中の状態保持 / 短い要約でトグル非表示
 
-- [ ] 要約キャッシュキーを `jsonlPath` 単位に変更 (1 jsonl = 最大 1 要約)。現状は `jsonlPath@mtimeMs` キーで、jsonl が更新されると `readSummaryStatus` の peek が miss し、表示済みの要約テキストが消えて「要約」ボタンに戻る
-  - cache を `Map<jsonlPath, { result, mtimeMs }>` に変更
-  - `peek` は最後に成功した要約を mtime に関係なく返す
-  - `getOrCompute` は `cached.mtimeMs === 引数 mtimeMs` のときだけ据え置き、ずれてたら再計算 (旧結果は新結果で上書きされるまで peek 経由で表示し続けられる)
-  - `readSummaryStatus` は mtime ずれ時に `stale: true` フラグを付け、UI で薄色化や「(古い)」表示を検討
-
 - [ ] Claude Code 作業でサーバが止まっている場合がある。原因を調べて
 ubuntu@Sx360:~/claude-code-manager$ ./run-ai-monitor.sh
 [build] vibeboard: npm run build

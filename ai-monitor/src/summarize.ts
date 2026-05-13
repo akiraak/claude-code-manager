@@ -11,12 +11,27 @@ export interface SummaryResult {
   generatedAt?: number;
   /** state === 'error' のときの簡単なメッセージ (UI には出さない、ログ用) */
   error?: string;
+  /**
+   * 要約生成時の jsonl mtime と現在の jsonl mtime がズレているか。
+   * `readSummaryStatus` が立てる。要約結果本体には載せない。
+   * UI 側で薄色化 / 「(古い)」表示の判定に使う。
+   */
+  stale?: boolean;
+}
+
+/** Summarizer 内部キャッシュの 1 エントリ。生成時の mtime を一緒に保持する。 */
+export interface CachedSummary {
+  result: SummaryResult;
+  mtimeMs: number;
 }
 
 export interface SummarizerOptions {
   apiKey?: string;
   model?: string;
-  /** 計算完了時に呼ばれる。Phase 3 で SSE push のトリガに使う。 */
+  /**
+   * 計算完了時に呼ばれる。`key` は `jsonlPath` 単体 (mtime は含まない)。
+   * SSE push のトリガに使う想定。
+   */
   onUpdate?: (key: string, result: SummaryResult) => void;
 }
 
@@ -42,17 +57,25 @@ const SYSTEM_PROMPT =
 /**
  * Claude API で「セッションは今何をしていてどこまで進んだか」を 1〜2 行に要約する。
  *
- * - `(jsonlPath, mtimeMs)` 単位でメモリにキャッシュ
- * - 同じキーへの並行呼び出しは in-flight Promise を共有
+ * - `jsonlPath` 単位でメモリにキャッシュ (1 jsonl = 最大 1 要約)。
+ *   生成時の `mtimeMs` も一緒に保持し、新しい mtime のリクエスト時に
+ *   「これは古いキャッシュ」と判定できるようにする。
+ * - 同じ jsonl への並行呼び出しは in-flight Promise を共有
  * - API キー未設定なら常に `{ state: 'unavailable' }` を返す (ネットワーク呼び出しはしない)
- * - 4xx (キー不正等) はその mtime のキャッシュへ `unavailable` を保存し沈黙
+ * - 4xx (キー不正等) はキャッシュへ `unavailable` を保存し沈黙
  * - 5xx / ネットワークはキャッシュへ保存せず、次の呼び出しで再試行可能
+ *
+ * `peek` は mtime に関係なく最後に保存された結果を返す。これにより、
+ * jsonl が 1 行追記されただけで UI 上の要約表示が消えてしまうのを防ぐ
+ * (新しい要約は次の `getOrCompute` で計算され、完了するまで旧結果が
+ * 表示され続ける)。「古い」判定は呼び出し側 (`readSummaryStatus`) が
+ * `cached.mtimeMs` と現在の mtime を比較して行う。
  */
 export class Summarizer {
   private readonly apiKey?: string;
   private readonly model: string;
   private readonly onUpdate: (key: string, result: SummaryResult) => void;
-  private readonly cache = new Map<string, SummaryResult>();
+  private readonly cache = new Map<string, CachedSummary>();
   private readonly inflight = new Map<string, Promise<SummaryResult>>();
   private client?: Anthropic;
 
@@ -66,48 +89,48 @@ export class Summarizer {
     return Boolean(this.apiKey);
   }
 
-  private cacheKey(jsonlPath: string, mtimeMs: number): string {
-    return `${jsonlPath}@${mtimeMs}`;
-  }
-
-  /** キャッシュにあれば返す。無ければ undefined。Phase 3 で SSE 通知時の参照に使う。 */
-  peek(jsonlPath: string, mtimeMs: number): SummaryResult | undefined {
-    return this.cache.get(this.cacheKey(jsonlPath, mtimeMs));
+  /**
+   * 最後に保存した要約結果と、その生成時の mtime を返す。`mtimeMs` の
+   * 一致判定は呼び出し側で行う (= 古いキャッシュも返す)。
+   */
+  peek(jsonlPath: string): CachedSummary | undefined {
+    return this.cache.get(jsonlPath);
   }
 
   /** 計算中 (inflight) かどうか。`getOrCompute` を呼ばずに状態だけ知りたいときに使う。 */
-  isInflight(jsonlPath: string, mtimeMs: number): boolean {
-    return this.inflight.has(this.cacheKey(jsonlPath, mtimeMs));
+  isInflight(jsonlPath: string): boolean {
+    return this.inflight.has(jsonlPath);
   }
 
   /**
-   * キャッシュにあれば即返し、無ければバックグラウンドで計算を開始して `pending` を返す。
-   * 計算完了時に `onUpdate(key, result)` が呼ばれる (SSE push のトリガに使う想定)。
+   * キャッシュの mtime が一致すれば即返し、ずれていれば (or 無ければ)
+   * バックグラウンドで計算を開始して `pending` を返す。
+   * 計算完了時に `onUpdate(jsonlPath, result)` が呼ばれる (SSE push のトリガに使う想定)。
+   *
+   * 旧結果は新結果が完成するまで `peek` 経由で見える。
    */
   getOrCompute(jsonlPath: string, mtimeMs: number, input: SummarizeInput): SummaryResult {
     if (!this.apiKey) return { state: 'unavailable' };
-    const key = this.cacheKey(jsonlPath, mtimeMs);
-    const cached = this.cache.get(key);
-    if (cached) return cached;
-    if (!this.inflight.has(key)) this.startCompute(key, input);
+    const cached = this.cache.get(jsonlPath);
+    if (cached && cached.mtimeMs === mtimeMs) return cached.result;
+    if (!this.inflight.has(jsonlPath)) this.startCompute(jsonlPath, mtimeMs, input);
     return { state: 'pending' };
   }
 
   /** Phase 2 検証 / 結合テスト用に「完了まで待つ」API。通常 UI からは使わない。 */
   async wait(jsonlPath: string, mtimeMs: number, input: SummarizeInput): Promise<SummaryResult> {
     if (!this.apiKey) return { state: 'unavailable' };
-    const key = this.cacheKey(jsonlPath, mtimeMs);
-    const cached = this.cache.get(key);
-    if (cached) return cached;
-    let p = this.inflight.get(key);
-    if (!p) p = this.startCompute(key, input);
+    const cached = this.cache.get(jsonlPath);
+    if (cached && cached.mtimeMs === mtimeMs) return cached.result;
+    let p = this.inflight.get(jsonlPath);
+    if (!p) p = this.startCompute(jsonlPath, mtimeMs, input);
     return p;
   }
 
-  private startCompute(key: string, input: SummarizeInput): Promise<SummaryResult> {
+  private startCompute(jsonlPath: string, mtimeMs: number, input: SummarizeInput): Promise<SummaryResult> {
     const p = this.compute(input)
       .then(result => {
-        this.cache.set(key, result);
+        this.cache.set(jsonlPath, { result, mtimeMs });
         return result;
       })
       .catch(err => {
@@ -116,13 +139,13 @@ export class Summarizer {
         return result;
       })
       .finally(() => {
-        this.inflight.delete(key);
+        this.inflight.delete(jsonlPath);
       })
       .then(result => {
-        try { this.onUpdate(key, result); } catch { /* listener エラーは握りつぶす */ }
+        try { this.onUpdate(jsonlPath, result); } catch { /* listener エラーは握りつぶす */ }
         return result;
       });
-    this.inflight.set(key, p);
+    this.inflight.set(jsonlPath, p);
     return p;
   }
 
