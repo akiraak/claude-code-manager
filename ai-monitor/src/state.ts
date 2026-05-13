@@ -1,4 +1,5 @@
 import { listClaudeProcesses, type ClaudeProcess } from './processes';
+import type { Summarizer, SummaryResult } from './summarize';
 import {
   listTranscripts,
   readTailEvents,
@@ -27,6 +28,13 @@ export interface MonitorEntry {
   tail?: TailSummary;
   /** activity 判定。プロセス生存有無と jsonl mtime / 末尾イベント種別から決まる。 */
   state: ActivityState;
+  /** AI 要約結果。Summarizer 未提供時 / jsonl 無し時は undefined。 */
+  summary?: SummaryResult;
+}
+
+export interface BuildEntriesOptions {
+  /** 渡された場合、jsonl がある entry に getOrCompute の結果を summary としてセットする。 */
+  summarizer?: Summarizer;
 }
 
 /** cwd → URL 安全な ID。decode 側は decodeId を使う。 */
@@ -73,7 +81,7 @@ export function classifyV2(opts: ClassifyInput): ActivityState {
  * - プロセスが消えた transcript も `STOPPED_RETENTION_SEC` 以内なら停止 / エラーとして残す
  * - 各 entry には末尾イベントの要約 (tail) を含める
  */
-export async function buildEntries(): Promise<MonitorEntry[]> {
+export async function buildEntries(opts: BuildEntriesOptions = {}): Promise<MonitorEntry[]> {
   const [processes, transcripts] = await Promise.all([
     listClaudeProcesses(),
     Promise.resolve(listTranscripts()),
@@ -86,6 +94,7 @@ export async function buildEntries(): Promise<MonitorEntry[]> {
     if (!cur || t.mtimeMs > cur.mtimeMs) byCwd.set(t.cwd, t);
   }
 
+  const summarizer = opts.summarizer;
   const entries: MonitorEntry[] = [];
   const seen = new Set<string>();
 
@@ -94,8 +103,12 @@ export async function buildEntries(): Promise<MonitorEntry[]> {
     if (seen.has(proc.cwd)) continue;
     seen.add(proc.cwd);
     const ts = byCwd.get(proc.cwd);
-    const tail = ts ? summarizeTail(readTailEvents(ts.jsonlPath, 50)) : undefined;
+    const events = ts ? readTailEvents(ts.jsonlPath, 50) : [];
+    const tail = ts ? summarizeTail(events) : undefined;
     const lastActivityAt = ts ? new Date(ts.mtimeMs).toISOString() : undefined;
+    const summary = ts && summarizer
+      ? summarizer.getOrCompute(ts.jsonlPath, ts.mtimeMs, events)
+      : undefined;
     entries.push({
       id: encodeId(proc.cwd),
       cwd: proc.cwd,
@@ -108,6 +121,7 @@ export async function buildEntries(): Promise<MonitorEntry[]> {
         lastActivityAt,
         endsWithUnmatchedToolUse: tail?.endsWithUnmatchedToolUse ?? false,
       }),
+      summary,
     });
   }
 
@@ -117,8 +131,12 @@ export async function buildEntries(): Promise<MonitorEntry[]> {
     if (seen.has(ts.cwd)) continue;
     if (ts.mtimeMs < retentionCutoffMs) continue;
     seen.add(ts.cwd);
-    const tail = summarizeTail(readTailEvents(ts.jsonlPath, 50));
+    const events = readTailEvents(ts.jsonlPath, 50);
+    const tail = summarizeTail(events);
     const lastActivityAt = new Date(ts.mtimeMs).toISOString();
+    const summary = summarizer
+      ? summarizer.getOrCompute(ts.jsonlPath, ts.mtimeMs, events)
+      : undefined;
     entries.push({
       id: encodeId(ts.cwd),
       cwd: ts.cwd,
@@ -130,6 +148,7 @@ export async function buildEntries(): Promise<MonitorEntry[]> {
         lastActivityAt,
         endsWithUnmatchedToolUse: tail.endsWithUnmatchedToolUse,
       }),
+      summary,
     });
   }
 

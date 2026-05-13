@@ -1,5 +1,6 @@
 import express, { Request, Response } from 'express';
 import { buildEntries, decodeId, type ActivityState, type MonitorEntry } from './state';
+import { Summarizer } from './summarize';
 import { projectsDir } from './transcript';
 import { renderDashboard, renderNotFound, renderProcessView } from './views';
 
@@ -63,6 +64,16 @@ function snapshotFingerprint(entries: MonitorEntry[]): string {
 export function startServer(opts: ServerOptions): void {
   const app = express();
 
+  // 要約が完了したタイミングで購読中の SSE クライアントに通知するためのリスナ集合
+  const summaryListeners = new Set<() => void>();
+  const summarizer = new Summarizer({
+    onUpdate: () => {
+      for (const fn of summaryListeners) {
+        try { fn(); } catch { /* リスナのエラーは握りつぶす */ }
+      }
+    },
+  });
+
   // すべてのレスポンスに CORS を付ける (ループバック専用前提で `*`)
   app.use((_req, res, next) => {
     corsHeaders(res);
@@ -71,7 +82,7 @@ export function startServer(opts: ServerOptions): void {
 
   app.get('/api/sidebar', async (_req: Request, res: Response) => {
     try {
-      const entries = await buildEntries();
+      const entries = await buildEntries({ summarizer });
       noStore(res);
       res.setHeader('Content-Type', 'application/json; charset=utf-8');
       res.json({ items: buildSidebarItems(entries) });
@@ -88,7 +99,7 @@ export function startServer(opts: ServerOptions): void {
     res.setHeader('Content-Security-Policy', "frame-ancestors http://127.0.0.1:* http://localhost:*");
 
     try {
-      const entries = await buildEntries();
+      const entries = await buildEntries({ summarizer });
       if (itemId === 'dashboard' || itemId === '') {
         res.send(renderDashboard(entries));
         return;
@@ -130,7 +141,7 @@ export function startServer(opts: ServerOptions): void {
     const tick = async (): Promise<void> => {
       if (!alive) return;
       try {
-        const entries = await buildEntries();
+        const entries = await buildEntries({ summarizer });
         const fp = snapshotFingerprint(entries);
         if (fp !== lastFingerprint) {
           // サイドバー構成 (cwd/PID/state) が変わったとき
@@ -165,6 +176,15 @@ export function startServer(opts: ServerOptions): void {
       }
     };
 
+    // 要約完了をトリガに dashboard を再取得させる
+    const onSummaryUpdate = (): void => {
+      if (!alive) return;
+      try {
+        res.write(`event: item-changed\ndata: ${JSON.stringify({ id: 'dashboard' })}\n\n`);
+      } catch { /* ignore */ }
+    };
+    summaryListeners.add(onSummaryUpdate);
+
     // 初回呼び出しで現在状態をベースラインに乗せる (即時 sidebar push)
     await tick();
     // 2 秒間隔のポーリング
@@ -179,6 +199,7 @@ export function startServer(opts: ServerOptions): void {
       alive = false;
       clearInterval(pollInterval);
       clearInterval(pingInterval);
+      summaryListeners.delete(onSummaryUpdate);
     });
   });
 

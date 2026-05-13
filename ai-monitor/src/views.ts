@@ -1,4 +1,5 @@
 import type { ActivityState, MonitorEntry } from './state';
+import type { SummaryResult } from './summarize';
 import { readTailEvents, type NormalizedEvent } from './transcript';
 
 export function escapeHtml(s: string): string {
@@ -91,12 +92,38 @@ h1 { font-size: 18px; margin: 0 0 12px; }
 }
 .card-meta { color: #666; font-size: 11px; white-space: nowrap; }
 .card-summary {
-  color: #555;
+  color: #333;
   font-size: 12px;
   margin-bottom: 8px;
-  min-height: 0;
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  line-height: 1.5;
 }
 .card-summary:empty { display: none; }
+.card-summary-muted { color: #999; font-style: italic; }
+.card-summary-pending { color: #888; }
+.card-summary-icon { flex: 0 0 auto; }
+.card-summary-text {
+  flex: 1 1 auto;
+  word-break: break-word;
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.spinner {
+  display: inline-block;
+  width: 10px;
+  height: 10px;
+  border: 2px solid #ddd;
+  border-top-color: #888;
+  border-radius: 50%;
+  animation: card-summary-spin 0.8s linear infinite;
+  vertical-align: -1px;
+  margin-right: 4px;
+}
+@keyframes card-summary-spin { to { transform: rotate(360deg); } }
 .card-user, .card-assistant {
   border-top: 1px solid #f0f0f0;
   padding-top: 8px;
@@ -168,6 +195,23 @@ function previewText(s: string | undefined, maxChars = 240): string {
   return `${cleaned.slice(0, maxChars)}…`;
 }
 
+function renderSummary(summary: SummaryResult | undefined): string {
+  if (!summary) return '';
+  if (summary.state === 'ok' && summary.text) {
+    return `<div class="card-summary"><span class="card-summary-icon">📝</span><span class="card-summary-text">${escapeHtml(summary.text)}</span></div>`;
+  }
+  if (summary.state === 'pending') {
+    return `<div class="card-summary card-summary-pending"><span class="spinner"></span><span class="card-summary-text">要約中…</span></div>`;
+  }
+  if (summary.state === 'unavailable') {
+    return `<div class="card-summary card-summary-muted"><span class="card-summary-text">(要約: API キー未設定)</span></div>`;
+  }
+  if (summary.state === 'error') {
+    return `<div class="card-summary card-summary-muted"><span class="card-summary-text">(要約失敗)</span></div>`;
+  }
+  return '';
+}
+
 function renderCardBody(entry: MonitorEntry): string {
   const tail = entry.tail;
   const userPreview = previewText(tail?.lastUserText);
@@ -179,7 +223,7 @@ function renderCardBody(entry: MonitorEntry): string {
     ? `<div class="card-line-body">${escapeHtml(assistantPreview)}</div>`
     : `<div class="card-line-body empty">(まだ Claude の返信がありません)</div>`;
   return `
-    <div class="card-summary"><!-- Phase 2/3 で AI 要約を挿入 --></div>
+    ${renderSummary(entry.summary)}
     <div class="card-user">
       <div class="card-line-head">👤 ユーザー (${escapeHtml(fmtRelativeTime(tail?.lastUserAt))})</div>
       ${userBody}
