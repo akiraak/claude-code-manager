@@ -1,5 +1,9 @@
 # DONE
 
+- 2026-05-13: `/clear` などスラッシュコマンドの XML 包みを表示時に剥がす ([plan](docs/plans/archive/strip-command-xml-from-user-text.md))
+    - `ai-monitor/src/transcript.ts` に `formatUserMessageForDisplay` を追加し、`<command-name>...</command-name>` + `<command-args>...</command-args>` を `/clear` / `/foo bar` 形式に整形
+    - `<local-command-stdout>...</local-command-stdout>` (`! ...` シェル実行結果) は中身のみ抽出。空なら `(出力なし)` プレースホルダ
+    - `readTailEvents` の user-text (string / array text) と system event の 3 箇所で適用
 - 2026-05-12: ダッシュボードのユーザ入力 / AI 返信をターミナル風デザインに ([plan](docs/plans/archive/dashboard-terminal-style.md))
     - カード内の `card-user` / `card-assistant` ブロックを `card-terminal` ラッパーに統合し、ダーク背景 (`#1e1e1e`) + 等幅で会話ログ感を演出
     - `▶ user` (`#4ec9b0`) / `▶ claude` (`#dcdcaa`) ヘッダ + 右寄せ `HH:MM:SS` 時刻 (`fmtClockTime` 追加)。本文は line-clamp 3 行維持

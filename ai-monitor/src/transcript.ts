@@ -151,6 +151,34 @@ export function cwdToProjectDir(cwd: string): string {
   return cwd.replace(/[^A-Za-z0-9]/g, '-');
 }
 
+/**
+ * スラッシュコマンドを叩くと jsonl の user.content には
+ *   "<command-name>/clear</command-name>\n<command-message>...</command-message>\n<command-args>...</command-args>"
+ * のような XML 風の包みが書き出される。ダッシュボードでそのまま出すとノイズになるので
+ * `/clear` / `/foo bar` のような表示用文字列に整形する。
+ *
+ * `! ...` でシェル実行したときは `<local-command-stdout>...</local-command-stdout>` だけが
+ * user メッセージ (または system event) として書かれる。中身のみを取り出し、空なら
+ * `(出力なし)` のプレースホルダを返す。
+ *
+ * 該当パターンに当たらない普通のテキストはそのまま返す。
+ */
+function formatUserMessageForDisplay(raw: string): string {
+  const nameMatch = raw.match(/<command-name>([\s\S]*?)<\/command-name>/);
+  if (nameMatch) {
+    const name = nameMatch[1].trim();
+    const argsMatch = raw.match(/<command-args>([\s\S]*?)<\/command-args>/);
+    const args = argsMatch ? argsMatch[1].trim() : '';
+    return args ? `${name} ${args}` : name;
+  }
+  const stdoutMatch = raw.match(/<local-command-stdout>([\s\S]*?)<\/local-command-stdout>/);
+  if (stdoutMatch) {
+    const inner = stdoutMatch[1].trim();
+    return inner.length > 0 ? inner : '(出力なし)';
+  }
+  return raw;
+}
+
 /** message.content から表示用のテキストを 1 つ取り出す (短くトリミングは呼び出し側で行う)。 */
 function stringifyToolResultContent(content: unknown): string {
   if (typeof content === 'string') return content;
@@ -213,7 +241,7 @@ export function readTailEvents(jsonlPath: string, limit = 200): NormalizedEvent[
       const msg = obj.message as { content?: unknown } | undefined;
       const content = msg?.content;
       if (typeof content === 'string') {
-        out.push({ kind: 'user-text', timestamp, text: content, isMeta });
+        out.push({ kind: 'user-text', timestamp, text: formatUserMessageForDisplay(content), isMeta });
       } else if (Array.isArray(content)) {
         for (const item of content) {
           if (!item || typeof item !== 'object') continue;
@@ -228,7 +256,7 @@ export function readTailEvents(jsonlPath: string, limit = 200): NormalizedEvent[
           } else if (it.type === 'text') {
             const t = (it as { text?: string }).text;
             if (typeof t === 'string') {
-              out.push({ kind: 'user-text', timestamp, text: t, isMeta });
+              out.push({ kind: 'user-text', timestamp, text: formatUserMessageForDisplay(t), isMeta });
             }
           }
         }
@@ -267,10 +295,10 @@ export function readTailEvents(jsonlPath: string, limit = 200): NormalizedEvent[
         }
       }
     } else if (type === 'system') {
-      const text = typeof (obj as { content?: unknown }).content === 'string'
+      const raw = typeof (obj as { content?: unknown }).content === 'string'
         ? ((obj as { content?: string }).content as string)
         : '';
-      out.push({ kind: 'system', timestamp, text });
+      out.push({ kind: 'system', timestamp, text: formatUserMessageForDisplay(raw) });
     }
     // file-history-snapshot / attachment / ai-title / last-prompt は MVP では無視
   }
