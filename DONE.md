@@ -1,5 +1,12 @@
 # DONE
 
+- 2026-05-13: ダッシュボードを「起動中」と「停止」で分けて表示する ([plan](docs/plans/archive/dashboard-split-running-stopped.md))
+    - 旧実装は `buildEntries` の結果を 1 つのグリッドに cwd 順で並べていたため、24h retention で増えた停止カードと稼働中 CLI が混在し、稼働中をひと目で把握しづらかった
+    - `renderDashboard` を 2 セクション (`data-section="running"` / `data-section="stopped"`) 構成に変更。state !== 'stopped' を起動中、'stopped' を停止に振り分け、両セクションとも cwd 順を維持。各セクションは独立した `<div class="cards" data-cards-running>` / `<div class="cards" data-cards-stopped>` を持つ
+    - `DASHBOARD_LIVE_SCRIPT` の `applyPatch` を 2 コンテナ対応に再構成。共通の DOM diff-patch 処理を `patchContainer(container, entries)` に切り出し、起動中グループと停止グループを別々に index 化 / update / 並べ替え / 削除する。SSE で片方のセクションが触られてももう片方の脈動アニメは継続
+    - セクションが 0 件のときは見出し (`<h2 class="section-title">`) ごと `hidden` で消す。`section-title:first-of-type` は起動中が空のとき効かなくなるので `section-title[data-section="running"]` ベースのセレクタで CSS を書いた
+    - 件数 (`[data-section="..."] [data-count]`) もクライアント側で書き換え。`empty` メッセージは `entries.length === 0` のときだけ表示する挙動を維持
+    - `views.test.ts` に 3 ケース追加 (混在 / 全件起動中 / 全件停止) + 既存空テストを 2 コンテナ前提に更新。計 20 / 20 通過
 - 2026-05-13: ダッシュボードカードに「直近のユーザー入力」を遡って表示する ([plan](docs/plans/archive/dashboard-recall-last-user-input.md))
     - 旧実装は `readTailEvents(50)` の窓内だけ走査していたため、ツールが 25 回以上連打されると user-text が tail から押し出され、カードに `(まだユーザー入力がありません)` が出ていた
     - `transcript.ts` に `findLastUserText(jsonlPath, mtimeMs)` を追加。`(jsonlPath, mtimeMs)` をキーにメモした上で 256KB → 1MB → 4MB → 16MB と窓を段階拡張し、末尾から逆順に走査して直近の `type: 'user'` (isMeta / tool_result は除外) を返す。表示整形は既存 `formatUserMessageForDisplay` を流用

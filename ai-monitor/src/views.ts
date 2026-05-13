@@ -92,6 +92,16 @@ h1 { font-size: 18px; margin: 0 0 12px; }
   grid-template-columns: repeat(auto-fill, minmax(360px, 1fr));
   gap: 12px;
 }
+.section-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: #555;
+  margin: 16px 0 8px;
+  padding-bottom: 4px;
+  border-bottom: 1px solid #e5e5e5;
+}
+.section-title[data-section="running"] { margin-top: 0; }
+.section-title [data-count] { color: #999; font-weight: 400; }
 .card {
   display: block;
   background: #fff;
@@ -635,16 +645,7 @@ const DASHBOARD_LIVE_SCRIPT = `
     }
   }
 
-  function applyPatch(payload) {
-    var entries = (payload && payload.entries) || [];
-    var container = document.querySelector('[data-cards]');
-    var emptyEl = document.querySelector('[data-empty]');
-    if (!container) return;
-
-    var isEmpty = entries.length === 0;
-    container.hidden = isEmpty;
-    if (emptyEl) emptyEl.hidden = !isEmpty;
-
+  function patchContainer(container, entries) {
     // 既存カードを index 化
     var existing = {};
     var cards = container.querySelectorAll('.card[data-card-id]');
@@ -676,6 +677,44 @@ const DASHBOARD_LIVE_SCRIPT = `
     for (var id in existing) {
       if (!seen[id]) existing[id].remove();
     }
+  }
+
+  function applyPatch(payload) {
+    var entries = (payload && payload.entries) || [];
+    var runningContainer = document.querySelector('[data-cards-running]');
+    var stoppedContainer = document.querySelector('[data-cards-stopped]');
+    var emptyEl = document.querySelector('[data-empty]');
+    if (!runningContainer || !stoppedContainer) return;
+
+    var running = [];
+    var stopped = [];
+    for (var i = 0; i < entries.length; i++) {
+      if (entries[i].state === 'stopped') stopped.push(entries[i]);
+      else running.push(entries[i]);
+    }
+
+    var isEmpty = entries.length === 0;
+    if (emptyEl) emptyEl.hidden = !isEmpty;
+
+    // 起動中セクション: 全件 0 のときは空メッセージに譲るため hidden
+    var runningTitle = document.querySelector('[data-section="running"]');
+    var hideRunning = running.length === 0;
+    runningContainer.hidden = hideRunning;
+    if (runningTitle) runningTitle.hidden = hideRunning;
+    patchContainer(runningContainer, running);
+
+    // 停止セクション: 0 件なら見出しごと隠す
+    var stoppedTitle = document.querySelector('[data-section="stopped"]');
+    var hideStopped = stopped.length === 0;
+    stoppedContainer.hidden = hideStopped;
+    if (stoppedTitle) stoppedTitle.hidden = hideStopped;
+    patchContainer(stoppedContainer, stopped);
+
+    // セクション見出しの件数
+    var runningCount = document.querySelector('[data-section="running"] [data-count]');
+    if (runningCount) setText(runningCount, String(running.length));
+    var stoppedCount = document.querySelector('[data-section="stopped"] [data-count]');
+    if (stoppedCount) setText(stoppedCount, String(stopped.length));
 
     // meta 行 (件数 + 取得時刻) を更新
     var metaEl = document.querySelector('[data-dashboard-meta]');
@@ -724,17 +763,25 @@ const DASHBOARD_LIVE_SCRIPT = `
 
 export function renderDashboard(entries: MonitorEntry[]): string {
   const now = new Date().toISOString();
-  // Phase 2: `.cards` と `.empty` を常に両方レンダリングし、`hidden` 属性で
-  // 表示を切り替える。JS が動かない環境でも初回は片方が見える。
+  // 起動中 / 停止 の 2 セクションに分割する。state === 'stopped' のみ停止セクション。
+  // JS が動かない環境でも初回は HTML だけで両セクションが見える。
+  const running = entries.filter(e => e.state !== 'stopped');
+  const stopped = entries.filter(e => e.state === 'stopped');
   const isEmpty = entries.length === 0;
-  const cardsHtml = entries.map(e => renderCardFromData(entryToDashboardCardData(e))).join('\n');
+  const runningHtml = running.map(e => renderCardFromData(entryToDashboardCardData(e))).join('\n');
+  const stoppedHtml = stopped.map(e => renderCardFromData(entryToDashboardCardData(e))).join('\n');
+  const runningHidden = running.length === 0;
+  const stoppedHidden = stopped.length === 0;
   return `<!doctype html>
 <html><head><meta charset="utf-8"><title>AI Monitor Dashboard</title>
 <style>${COMMON_STYLE}</style></head>
 <body>
   <h1>Dashboard</h1>
   <div class="meta" data-dashboard-meta>表示中 CLI: ${entries.length} 件 · 取得時刻: ${escapeHtml(now)}</div>
-  <div class="cards" data-cards${isEmpty ? ' hidden' : ''}>${cardsHtml}</div>
+  <h2 class="section-title" data-section="running"${runningHidden ? ' hidden' : ''}>起動中 <span data-count>${running.length}</span></h2>
+  <div class="cards" data-cards-running${runningHidden ? ' hidden' : ''}>${runningHtml}</div>
+  <h2 class="section-title" data-section="stopped"${stoppedHidden ? ' hidden' : ''}>停止 <span data-count>${stopped.length}</span></h2>
+  <div class="cards" data-cards-stopped${stoppedHidden ? ' hidden' : ''}>${stoppedHtml}</div>
   <div class="empty" data-empty${isEmpty ? '' : ' hidden'}>稼働中の Claude Code CLI が見つかりません。</div>
   <script>${DASHBOARD_SCRIPT}</script>
   <script>${DASHBOARD_LIVE_SCRIPT}</script>
