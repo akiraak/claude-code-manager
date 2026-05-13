@@ -148,14 +148,40 @@ h1 { font-size: 18px; margin: 0 0 12px; }
 .card-summary-muted { color: #999; font-style: italic; }
 .card-summary-pending { color: #888; }
 .card-summary-icon { flex: 0 0 auto; }
+.card-summary-content {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+}
 .card-summary-text {
   flex: 1 1 auto;
   word-break: break-word;
   display: -webkit-box;
-  -webkit-line-clamp: 3;
+  -webkit-line-clamp: 6;
   -webkit-box-orient: vertical;
   overflow: hidden;
 }
+.card-summary.expanded .card-summary-text {
+  -webkit-line-clamp: unset;
+  display: block;
+  overflow: visible;
+}
+.card-summary-toggle {
+  display: inline-block;
+  padding: 0;
+  margin: 0;
+  font: inherit;
+  font-size: 11px;
+  color: #1565c0;
+  background: none;
+  border: none;
+  cursor: pointer;
+}
+.card-summary-toggle:hover { text-decoration: underline; }
+.card-summary-toggle[hidden] { display: none; }
 .summarize-btn {
   display: inline-block;
   padding: 3px 10px;
@@ -346,11 +372,34 @@ export function entryToDashboardCardData(entry: MonitorEntry): DashboardCardData
   };
 }
 
+/**
+ * 要約テキストの先頭 64 文字に対する FNV-1a 32bit ハッシュ。
+ * `data-summary-key` 属性として DOM に乗せて、SSE で要約 HTML を置換した
+ * あとも「テキストが変わっていなければ展開状態を維持する」突き合わせキーとして使う。
+ * DASHBOARD_LIVE_SCRIPT 内の同名関数と完全に同じ計算で揃えること。
+ */
+function summaryHashKey(text: string): string {
+  const prefix = text.slice(0, 64);
+  let h = 0x811c9dc5;
+  for (let i = 0; i < prefix.length; i++) {
+    h ^= prefix.charCodeAt(i);
+    h = (h + ((h << 1) + (h << 4) + (h << 7) + (h << 8) + (h << 24))) >>> 0;
+  }
+  return h.toString(16);
+}
+
 function renderSummaryFromData(data: DashboardCardData): string {
   const summary = data.summary;
   if (!summary) return '';
   if (summary.state === 'ok' && summary.text) {
-    return `<div class="card-summary"><span class="card-summary-icon">📝</span><span class="card-summary-text">要約: ${escapeHtml(summary.text)}</span></div>`;
+    const key = summaryHashKey(summary.text);
+    return `<div class="card-summary" data-collapsible data-summary-key="${escapeHtml(key)}">`
+      + `<span class="card-summary-icon">📝</span>`
+      + `<div class="card-summary-content">`
+      + `<span class="card-summary-text">要約: ${escapeHtml(summary.text)}</span>`
+      + `<button type="button" class="card-summary-toggle" data-summary-toggle hidden>展開</button>`
+      + `</div>`
+      + `</div>`;
   }
   if (summary.state === 'pending') {
     return `<div class="card-summary card-summary-pending"><span class="spinner"></span><span class="card-summary-text">要約中…</span></div>`;
@@ -433,6 +482,21 @@ const DASHBOARD_SCRIPT = `
     var t = ev.target;
     if (!t) return;
 
+    // 要約トグル ([data-summary-toggle]) → 折りたたみ / 展開切替
+    // .card-summary は <a class="card-link"> の外なので navigateTopHash は呼ばれないが、
+    // 念のため preventDefault / stopPropagation で握りつぶす。
+    var toggle = t.closest ? t.closest('[data-summary-toggle]') : null;
+    if (toggle) {
+      ev.preventDefault();
+      ev.stopPropagation();
+      var wrap = toggle.closest('.card-summary');
+      if (!wrap) return;
+      var nowExpanded = !wrap.classList.contains('expanded');
+      wrap.classList.toggle('expanded', nowExpanded);
+      toggle.textContent = nowExpanded ? '折りたたむ' : '展開';
+      return;
+    }
+
     // カードリンク (a.card-link) クリック → 親 vibeboard に遷移を依頼
     var link = t.closest ? t.closest('.card-link') : null;
     if (link) {
@@ -499,12 +563,50 @@ const DASHBOARD_LIVE_SCRIPT = `
       .replace(/'/g, '&#39;');
   }
 
+  // サーバ側 summaryHashKey と完全一致させる FNV-1a 32bit。先頭 64 文字。
+  function summaryHashKey(text) {
+    var prefix = String(text || '').slice(0, 64);
+    var h = 0x811c9dc5;
+    for (var i = 0; i < prefix.length; i++) {
+      h ^= prefix.charCodeAt(i);
+      h = (h + ((h << 1) + (h << 4) + (h << 7) + (h << 8) + (h << 24))) >>> 0;
+    }
+    return h.toString(16);
+  }
+
+  // line-clamp で本当に切られているかを判定し、トグルボタンの hidden を切り替える。
+  // 「展開済み」のときは clamp 解除されているので scrollHeight==clientHeight になるが、
+  // ユーザーが意図的に開いた状態なのでボタンは出しておく。
+  function evalSummaryOverflow(wrap) {
+    if (!wrap || !wrap.hasAttribute('data-collapsible')) return;
+    var text = wrap.querySelector('.card-summary-text');
+    var btn = wrap.querySelector('[data-summary-toggle]');
+    if (!text || !btn) return;
+    if (wrap.classList.contains('expanded')) {
+      btn.hidden = false;
+      return;
+    }
+    btn.hidden = text.scrollHeight <= text.clientHeight + 1;
+  }
+
+  function evalAllSummaries() {
+    var wraps = document.querySelectorAll('.card-summary[data-collapsible]');
+    for (var i = 0; i < wraps.length; i++) evalSummaryOverflow(wraps[i]);
+  }
+
   // --- summary 部の HTML 構築 (サーバ側 renderSummaryFromData と一致させる) ---
   function renderSummary(data) {
     var s = data.summary;
     if (!s) return '';
     if (s.state === 'ok' && s.text) {
-      return '<div class="card-summary"><span class="card-summary-icon">📝</span><span class="card-summary-text">要約: ' + esc(s.text) + '</span></div>';
+      var key = summaryHashKey(s.text);
+      return '<div class="card-summary" data-collapsible data-summary-key="' + esc(key) + '">'
+        + '<span class="card-summary-icon">📝</span>'
+        + '<div class="card-summary-content">'
+        + '<span class="card-summary-text">要約: ' + esc(s.text) + '</span>'
+        + '<button type="button" class="card-summary-toggle" data-summary-toggle hidden>展開</button>'
+        + '</div>'
+        + '</div>';
     }
     if (s.state === 'pending') {
       return '<div class="card-summary card-summary-pending"><span class="spinner"></span><span class="card-summary-text">要約中…</span></div>';
@@ -636,12 +738,38 @@ const DASHBOARD_LIVE_SCRIPT = `
     // 要約ブロックは状態ごとに DOM 構造が変わるので、生成済み HTML 同士を
     // 比較し、差分があれば差し替える。同じなら触らない (spinner / pulse の
     // アニメーション継続性のため)。
+    //
+    // 置換時は「同じ要約テキスト (= data-summary-key 一致) なら展開状態を維持」
+    // ロジックを通す。テキストが変わった (≒ jsonl 更新で再計算された) ときは
+    // 折りたたみから読み直してほしいので復元しない。
     var oldSummary = card.querySelector('.card-summary');
+    var oldKey = oldSummary ? oldSummary.getAttribute('data-summary-key') : null;
+    var wasExpanded = !!(oldSummary && oldSummary.classList.contains('expanded'));
     var newHTML = renderSummary(data);
-    var oldHTML = oldSummary ? oldSummary.outerHTML : '';
+    // expanded クラスは DOM 側だけにある状態なので、比較前に剥がしてから outerHTML を取る。
+    var oldHTML = '';
+    if (oldSummary) {
+      var hadExpanded = oldSummary.classList.contains('expanded');
+      if (hadExpanded) oldSummary.classList.remove('expanded');
+      oldHTML = oldSummary.outerHTML;
+      if (hadExpanded) oldSummary.classList.add('expanded');
+    }
     if (newHTML !== oldHTML) {
       if (oldSummary) oldSummary.remove();
       if (newHTML) card.insertAdjacentHTML('beforeend', newHTML);
+      var freshSummary = card.querySelector('.card-summary');
+      if (freshSummary && freshSummary.hasAttribute('data-collapsible')) {
+        var newKey = freshSummary.getAttribute('data-summary-key');
+        if (wasExpanded && oldKey && newKey === oldKey) {
+          freshSummary.classList.add('expanded');
+          var t = freshSummary.querySelector('[data-summary-toggle]');
+          if (t) t.textContent = '折りたたむ';
+        }
+        evalSummaryOverflow(freshSummary);
+      }
+    } else if (oldSummary && oldSummary.hasAttribute('data-collapsible')) {
+      // テキストは同じだが、レイアウト変化でクランプ状況が変わっている可能性がある。
+      evalSummaryOverflow(oldSummary);
     }
   }
 
@@ -721,6 +849,9 @@ const DASHBOARD_LIVE_SCRIPT = `
     if (metaEl) {
       setText(metaEl, '表示中 CLI: ' + entries.length + ' 件 · 取得時刻: ' + (payload.renderedAt || ''));
     }
+
+    // 全カードの要約 overflow を再評価。レイアウト確定後に走らせたいので rAF で 1 フレーム待つ。
+    requestAnimationFrame(evalAllSummaries);
   }
 
   function doFetch() {
@@ -753,10 +884,24 @@ const DASHBOARD_LIVE_SCRIPT = `
     // onerror は EventSource が自動再接続するので何もしない
   }
 
-  if (document.readyState === 'loading') {
-    document.addEventListener('DOMContentLoaded', startSSE);
-  } else {
+  function init() {
     startSSE();
+    // 初回 SSR 済みカードに対しても overflow 判定を走らせる。
+    requestAnimationFrame(evalAllSummaries);
+  }
+
+  // カード幅が変われば line-clamp の overflow 判定も変わるので、resize 時に再評価。
+  // (連発するので 100ms デバウンス)
+  var resizeTimer = null;
+  window.addEventListener('resize', function() {
+    if (resizeTimer) clearTimeout(resizeTimer);
+    resizeTimer = setTimeout(function() { resizeTimer = null; evalAllSummaries(); }, 100);
+  });
+
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', init);
+  } else {
+    init();
   }
 })();
 `;

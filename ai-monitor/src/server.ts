@@ -3,7 +3,7 @@ import express, { Request, Response } from 'express';
 import { ensureAwaitingInputDir, watchAwaitingInputMarkers } from './awaiting-input';
 import { buildEntries, decodeId, type ActivityState, type MonitorEntry } from './state';
 import { Summarizer } from './summarize';
-import { projectsDir, readTailEvents } from './transcript';
+import { findLastUserText, projectsDir, readTailEvents } from './transcript';
 import { buildProcessViewData, entryToDashboardCardData, renderDashboard, renderNotFound, renderProcessView } from './views';
 
 interface ServerOptions {
@@ -211,8 +211,16 @@ export function startServer(opts: ServerOptions): void {
         res.json({ state: 'unavailable' });
         return;
       }
-      const events = readTailEvents(entry.transcript.jsonlPath, 50);
-      const result = summarizer.getOrCompute(entry.transcript.jsonlPath, entry.transcript.mtimeMs, events);
+      // 要約は state 判定 (50 件) より広い窓 + ピン留め user-text で組み立てる。
+      // ツール往復が連続するセッションでも「直前のユーザー依頼」を必ず混ぜ込むため。
+      // 窓を 300 にしているのは、renderEventsForPrompt 側で tool-use / tool-result を捨てるため
+      // 150 だとツール往復の多いセッションで user/assistant の往復が数件しか拾えなくなるから。
+      const events = readTailEvents(entry.transcript.jsonlPath, 300);
+      const recalled = findLastUserText(entry.transcript.jsonlPath, entry.transcript.mtimeMs);
+      const result = summarizer.getOrCompute(entry.transcript.jsonlPath, entry.transcript.mtimeMs, {
+        events,
+        recentUserText: recalled ?? undefined,
+      });
       res.json(result);
     } catch (err) {
       console.warn('[ai-monitor] /api/summarize 失敗', err);
