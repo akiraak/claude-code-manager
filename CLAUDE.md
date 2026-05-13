@@ -27,10 +27,7 @@ upstream を本リポに fork として取り込み済み（`./vibeboard/`）。
 upstream への反映は後追いで行う。
 
 ```bash
-# 親プロジェクト直下から（初回のみ依存をインストール / ビルド）
-(cd vibeboard && npm install && npm run build)
-(cd ai-monitor && npm install && npm run build)
-# 起動は run-ai-monitor.sh が vibeboard + AI Monitor をまとめて立ち上げる
+# 起動 (依存インストール + ビルド + 既存停止 + 起動 を全部やる)
 ./run-ai-monitor.sh
 ```
 
@@ -47,9 +44,8 @@ upstream への反映は後追いで行う。
 稼働中の Claude Code CLI を vibeboard 上で可視化するためのサーバ。`./ai-monitor/` に実装がある。`run-ai-monitor.sh` が vibeboard と一緒に起動する（別プロセス）。
 
 ```bash
-# 初回のみ依存をインストール / ビルド
-(cd ai-monitor && npm install && npm run build)
-# 起動 (vibeboard 8180 + ai-monitor 8181 をまとめて立ち上げる)
+# 起動 (vibeboard 8180 + ai-monitor 8181 をまとめて立ち上げる。
+#       依存インストール + ビルドもスクリプト内で実施)
 ./run-ai-monitor.sh
 ```
 
@@ -67,7 +63,7 @@ upstream への反映は後追いで行う。
 | AI処理中 | 緑       | 脈動 | CLI 生存 + 直近 30 秒以内に jsonl 更新あり (AI 非介在のローカルコマンド直後は除く) |
 | 入力待ち | オレンジ | 脈動 | CLI 生存 + (末尾が `AskUserQuestion` / `ExitPlanMode` の未一致 `tool_use`) **または** (PermissionRequest hook の marker あり) |
 | 待機中   | 黄       | 静止 | CLI 生存 + 上記以外 (アイドル / 通常のターン終了 / `/clear` `! ls` 等の AI 非介在ローカルコマンド直後) |
-| 停止     | 灰       | 静止 | CLI 消滅 (10 分だけ残る = `STOPPED_RETENTION_SEC = 600` 秒) |
+| 停止     | 灰       | 静止 | CLI 消滅 (24 時間だけ残る = `STOPPED_RETENTION_SEC = 86_400` 秒) |
 
 入力待ち は **明示的なユーザー応答ブロッカーのみ** に限定する方針 (通常の AI ターン終了は 待機中)。
 Bash / Edit / Write 等の Yes/No 権限プロンプトも入力待ちに含めるため、グローバル hook (`~/.claude/hooks/ccm-awaiting-marker.py`) が PermissionRequest 時に `/tmp/claude-code-manager/awaiting-input/<session_id>.json` を置き、PostToolUse / Stop で消す。AI Monitor はそれを読み取り、`fs.watch` で変化を即座に SSE へ反映する。

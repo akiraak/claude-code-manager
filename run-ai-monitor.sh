@@ -3,17 +3,18 @@ set -euo pipefail
 
 cd "$(dirname "$0")"
 
-if [ ! -f vibeboard/dist/cli.js ]; then
-  echo "vibeboard/dist が見つかりません。先にビルドしてください:" >&2
-  echo "  (cd vibeboard && npm install && npm run build)" >&2
-  exit 1
-fi
+build_pkg() {
+  local dir="$1"
+  if [ ! -d "$dir/node_modules" ]; then
+    echo "[build] $dir: npm install" >&2
+    (cd "$dir" && npm install)
+  fi
+  echo "[build] $dir: npm run build" >&2
+  (cd "$dir" && npm run build)
+}
 
-if [ ! -f ai-monitor/dist/cli.js ]; then
-  echo "ai-monitor/dist が見つかりません。先にビルドしてください:" >&2
-  echo "  (cd ai-monitor && npm install && npm run build)" >&2
-  exit 1
-fi
+build_pkg vibeboard
+build_pkg ai-monitor
 
 VIBEBOARD_PORT="${VIBEBOARD_PORT:-8180}"
 AI_MONITOR_PORT="${AI_MONITOR_PORT:-8181}"

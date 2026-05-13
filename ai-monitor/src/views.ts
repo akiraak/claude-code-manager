@@ -46,7 +46,7 @@ const STATE_TOOLTIP_JA: Record<ActivityState, string> = {
   'ai-processing': 'CLI 生存 + 直近 30 秒以内に jsonl 更新あり (AI が応答生成中 / ツール実行中)',
   'awaiting-user': 'Yes/No 選択待ち (AskUserQuestion / ExitPlanMode が pending)',
   'waiting': 'CLI 生存 + 直近 30 秒以内に jsonl 更新なし (アイドル / 通常のターン終了)',
-  'stopped': 'CLI 消滅 (10 分間だけ残る)',
+  'stopped': 'CLI 消滅 (24 時間だけ残る)',
 };
 
 const COMMON_STYLE = `

@@ -31,7 +31,7 @@ function readSummaryStatus(
 export type ActivityState = 'ai-processing' | 'awaiting-user' | 'waiting' | 'stopped';
 
 /** プロセス消滅後もダッシュボードに残す保持時間 (秒)。これを超えた jsonl は表示から落とす。 */
-export const STOPPED_RETENTION_SEC = 600;
+export const STOPPED_RETENTION_SEC = 86_400;
 
 /** ai-processing 判定で「最近 jsonl が動いた」とみなす閾値 (ms)。 */
 const AI_PROCESSING_FRESH_MS = 30_000;
