@@ -1,5 +1,8 @@
 # DONE
 
+- 2026-05-12: AI Monitor タブを開いたら Dashboard が自動表示されるように ([plan](docs/plans/archive/ai-monitor-default-dashboard.md))
+    - `renderCustomTabSidebar` でサイドバー描画完了時に、URL hash が item を指していなければ先頭項目へ `location.replace` で遷移
+    - dashboard ID を vibeboard 側にハードコードせず、customTab 側が items の先頭を「初期表示」として返す約束を活用
 - 2026-05-12: 「入力待ち」state を追加 + エラー state を 停止 に統合 ([plan](docs/plans/archive/dashboard-state-awaiting-user-state.md))
     - 最終的に **4 状態**: AI処理中 (緑脈動) / **入力待ち (オレンジ脈動・新)** / 待機中 (黄) / 停止 (灰)
     - 入力待ち は **`AskUserQuestion` / `ExitPlanMode` の未一致 `tool_use` のみ** にスコープ限定 (通常のターン終了は 待機中)。複数 CLI 並行運用で 入力待ち が乱発しないよう絞った

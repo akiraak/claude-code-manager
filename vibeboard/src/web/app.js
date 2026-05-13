@@ -1540,6 +1540,19 @@ async function renderCustomTabSidebar(name) {
   }
   sidebarNav.appendChild(frag);
   refreshActiveHighlight();
+
+  // item 未指定で customTab を開いた場合は、サイドバー先頭の有効な項目に自動遷移する
+  // (例: AI Monitor を開くと Dashboard が即時表示される)
+  const firstItem = state.items.find(
+    it => it && typeof it.id === 'string' && typeof it.label === 'string'
+  );
+  if (firstItem) {
+    const parsed = parseHash();
+    const alreadySelected = !!(parsed && parsed.category === name && parsed.filePath);
+    if (!alreadySelected) {
+      location.replace(`#${name}/${encodeURIComponent(firstItem.id)}`);
+    }
+  }
 }
 
 function buildCustomTabSrc(tab, itemId, bust) {
