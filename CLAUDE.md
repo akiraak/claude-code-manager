@@ -64,13 +64,14 @@ upstream への反映は後追いで行う。
 
 | バッジ | 色 | 装飾 | 条件 |
 |---|---|---|---|
-| AI処理中 | 緑       | 脈動 | CLI 生存 + 直近 30 秒以内に jsonl 更新あり |
+| AI処理中 | 緑       | 脈動 | CLI 生存 + 直近 30 秒以内に jsonl 更新あり (AI 非介在のローカルコマンド直後は除く) |
 | 入力待ち | オレンジ | 脈動 | CLI 生存 + (末尾が `AskUserQuestion` / `ExitPlanMode` の未一致 `tool_use`) **または** (PermissionRequest hook の marker あり) |
-| 待機中   | 黄       | 静止 | CLI 生存 + 上記以外 (アイドル / 通常のターン終了) |
+| 待機中   | 黄       | 静止 | CLI 生存 + 上記以外 (アイドル / 通常のターン終了 / `/clear` `! ls` 等の AI 非介在ローカルコマンド直後) |
 | 停止     | 灰       | 静止 | CLI 消滅 (10 分だけ残る = `STOPPED_RETENTION_SEC = 600` 秒) |
 
 入力待ち は **明示的なユーザー応答ブロッカーのみ** に限定する方針 (通常の AI ターン終了は 待機中)。
 Bash / Edit / Write 等の Yes/No 権限プロンプトも入力待ちに含めるため、グローバル hook (`~/.claude/hooks/ccm-awaiting-marker.py`) が PermissionRequest 時に `/tmp/claude-code-manager/awaiting-input/<session_id>.json` を置き、PostToolUse / Stop で消す。AI Monitor はそれを読み取り、`fs.watch` で変化を即座に SSE へ反映する。
+`/clear` `/help` `! ls` 等の AI 非介在ローカルコマンドは jsonl の末尾が `system` (`subtype: local_command`) になるため、mtime が新しくても AI処理中 ではなく 待機中 として扱う (誤検知防止)。
 旧 `error` state は、対話ツール選択中に `/exit` した場合と本物のクラッシュを区別できず偽陽性が出るため `stopped` に統合した。
 突き合わせキーは `projectDir` (= `~/.claude/projects/<projectDir>/`)。セッション中に `cd` しても projectDir は不変なので 1 セッションが 1 カードにまとまる。
 

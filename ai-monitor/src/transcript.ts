@@ -18,6 +18,8 @@ export interface NormalizedEvent {
   toolName?: string;
   toolUseId?: string;
   isMeta?: boolean;
+  /** kind === 'system' のときの subtype (例: 'local_command')。state 判定で参照する。 */
+  systemSubtype?: string;
 }
 
 export interface TranscriptInfo {
@@ -298,7 +300,10 @@ export function readTailEvents(jsonlPath: string, limit = 200): NormalizedEvent[
       const raw = typeof (obj as { content?: unknown }).content === 'string'
         ? ((obj as { content?: string }).content as string)
         : '';
-      out.push({ kind: 'system', timestamp, text: formatUserMessageForDisplay(raw) });
+      const subtype = typeof (obj as { subtype?: unknown }).subtype === 'string'
+        ? ((obj as { subtype?: string }).subtype as string)
+        : undefined;
+      out.push({ kind: 'system', timestamp, text: formatUserMessageForDisplay(raw), systemSubtype: subtype });
     }
     // file-history-snapshot / attachment / ai-title / last-prompt は MVP では無視
   }
@@ -346,6 +351,11 @@ export interface TailSummary {
    * true のときは AI が処理中ではなくユーザー応答を待っている状態とみなす。
    */
   endsWithInteractiveToolUse: boolean;
+  /**
+   * 末尾が `system` kind の `local_command` subtype か (例: `/clear`, `! ls` 直後)。
+   * AI 呼び出しを伴わないローカルコマンドで終わっている → state 判定で waiting 扱いにする。
+   */
+  endsWithLocalCommand: boolean;
 }
 
 /**
@@ -374,6 +384,7 @@ export function summarizeTail(events: NormalizedEvent[]): TailSummary {
 
   let lastEventKind: EventKind | undefined;
   let endsWithInteractiveToolUse = false;
+  let endsWithLocalCommand = false;
   if (events.length > 0) {
     const last = events[events.length - 1];
     lastEventKind = last.kind;
@@ -382,6 +393,11 @@ export function summarizeTail(events: NormalizedEvent[]): TailSummary {
       // (応答済みなら tool_result が後ろに付くため末尾は別 kind)。したがってこの位置に
       // 居る限り pending とみなす。toolUseId 照合は冗長なので省略。
       endsWithInteractiveToolUse = true;
+    }
+    if (last.kind === 'system' && last.systemSubtype === 'local_command') {
+      // `/clear` `/help` `! ls` 等、AI 呼び出しを伴わないローカルコマンド直後。
+      // jsonl mtime は更新されるが実際は何も処理していないので waiting 扱いにしたい。
+      endsWithLocalCommand = true;
     }
   }
 
@@ -392,5 +408,6 @@ export function summarizeTail(events: NormalizedEvent[]): TailSummary {
     lastAssistantAt,
     lastEventKind,
     endsWithInteractiveToolUse,
+    endsWithLocalCommand,
   };
 }

@@ -88,6 +88,11 @@ interface ClassifyInput {
    * (Bash/Edit/Write 等の Yes/No 権限プロンプト表示中)。
    */
   hasAwaitingMarker: boolean;
+  /**
+   * 末尾が AI 呼び出しを伴わないローカルコマンド (`/clear`, `! ls` 等) か。
+   * jsonl mtime は新しくても AI は動いていないので waiting 扱いにする。
+   */
+  endsWithLocalCommand: boolean;
 }
 
 /**
@@ -96,6 +101,7 @@ interface ClassifyInput {
  * - プロセス生存:
  *   - 末尾が対話ツール (`AskUserQuestion` / `ExitPlanMode`) で未一致 → awaiting-user
  *   - PermissionRequest hook の marker あり (権限プロンプト保留中) → awaiting-user
+ *   - 末尾が AI 非介在のローカルコマンド (`/clear`, `! ls` 等) → waiting
  *   - jsonl が直近 30 秒以内に更新 → ai-processing
  *   - それ以外 → waiting
  * - プロセス消滅: stopped (STOPPED_RETENTION_SEC で表示から落とすのは buildEntries 側)
@@ -106,6 +112,7 @@ interface ClassifyInput {
 export function classifyV2(opts: ClassifyInput): ActivityState {
   if (!opts.hasProcess) return 'stopped';
   if (opts.endsWithInteractiveToolUse || opts.hasAwaitingMarker) return 'awaiting-user';
+  if (opts.endsWithLocalCommand) return 'waiting';
   const t = opts.lastActivityAt ? Date.parse(opts.lastActivityAt) : NaN;
   if (Number.isFinite(t) && Date.now() - t <= AI_PROCESSING_FRESH_MS) return 'ai-processing';
   return 'waiting';
@@ -171,6 +178,7 @@ export async function buildEntries(opts: BuildEntriesOptions = {}): Promise<Moni
         lastActivityAt,
         endsWithInteractiveToolUse: tail?.endsWithInteractiveToolUse ?? false,
         hasAwaitingMarker,
+        endsWithLocalCommand: tail?.endsWithLocalCommand ?? false,
       }),
       summary,
     });
@@ -200,6 +208,7 @@ export async function buildEntries(opts: BuildEntriesOptions = {}): Promise<Moni
         lastActivityAt,
         endsWithInteractiveToolUse: tail.endsWithInteractiveToolUse,
         hasAwaitingMarker: false,
+        endsWithLocalCommand: tail.endsWithLocalCommand,
       }),
       summary,
     });

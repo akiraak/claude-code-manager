@@ -1,5 +1,11 @@
 # DONE
 
+- 2026-05-13: `/clear` などスラッシュコマンド直後にダッシュボードが「AI処理中」になる問題を修正 ([plan](docs/plans/archive/dashboard-state-after-slash-command.md))
+    - jsonl 末尾が `system` (`subtype: local_command`) のときは AI が呼ばれていないとみなし、`classifyV2` が mtime に関わらず `waiting` を返すよう変更
+    - `NormalizedEvent.systemSubtype` を追加し、`readTailEvents` の system 分岐で `obj.subtype` を保持
+    - `TailSummary.endsWithLocalCommand` を `summarizeTail` で算出、`ClassifyInput` / `buildEntries` (生存・stopped 両ループ) に配線
+    - `classifyV2` の判定ケース 5 件を node:test ベースのユニットテストで担保 (`ai-monitor/src/state.test.ts`, `npm test`)
+    - CLAUDE.md の状態バッジ表に「ローカルコマンド直後は 待機中」の注釈を追記
 - 2026-05-13: 権限プロンプト (Bash/Edit/Write 等の Yes/No) 表示中も「入力待ち」として検知 ([plan](docs/plans/archive/awaiting-input-via-hook.md))
     - Phase 1: グローバル hook `~/.claude/hooks/ccm-awaiting-marker.py` を追加。`PermissionRequest` で `/tmp/claude-code-manager/awaiting-input/<session_id>.json` を作り、`PostToolUse` / `Stop` で消す。`~/.claude/settings.json` に並列登録 (既存の `notify-permission.py` には触らず)
     - Phase 2: `ai-monitor/src/awaiting-input.ts` を追加し、`classifyV2` に `hasAwaitingMarker` を組み込み (mtime 1h で stale 掃除付き)
