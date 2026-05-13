@@ -30,9 +30,16 @@ function fmtRelativeTime(iso: string | undefined): string {
 
 const STATE_LABEL_JA: Record<ActivityState, string> = {
   'ai-processing': 'AI処理中',
+  'awaiting-user': '入力待ち',
   'waiting': '待機中',
   'stopped': '停止',
-  'error': 'エラー',
+};
+
+const STATE_TOOLTIP_JA: Record<ActivityState, string> = {
+  'ai-processing': 'CLI 生存 + 直近 30 秒以内に jsonl 更新あり (AI が応答生成中 / ツール実行中)',
+  'awaiting-user': 'Yes/No 選択待ち (AskUserQuestion / ExitPlanMode が pending)',
+  'waiting': 'CLI 生存 + 直近 30 秒以内に jsonl 更新なし (アイドル / 通常のターン終了)',
+  'stopped': 'CLI 消滅 (10 分間だけ残る)',
 };
 
 const COMMON_STYLE = `
@@ -47,17 +54,31 @@ body {
 h1 { font-size: 18px; margin: 0 0 12px; }
 .meta { color: #666; font-size: 12px; margin-bottom: 12px; }
 .badge {
-  display: inline-block;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
   padding: 1px 8px;
   border-radius: 10px;
   font-size: 11px;
   font-weight: 600;
   white-space: nowrap;
+  cursor: help;
 }
-.badge-ai-processing { background: #e6f4ea; color: #1e7e34; }
-.badge-waiting       { background: #e3f2fd; color: #1565c0; }
-.badge-stopped       { background: #eceff1; color: #546e7a; }
-.badge-error         { background: #fdecea; color: #b71c1c; }
+.badge::before {
+  content: "";
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: currentColor;
+}
+.badge-ai-processing { background: #d4edda; color: #1b6e3a; }
+.badge-ai-processing::before { animation: badge-pulse 1.6s ease-in-out infinite; }
+.badge-awaiting-user { background: #ffe0b2; color: #bf360c; }
+.badge-awaiting-user::before { animation: badge-pulse 1.6s ease-in-out infinite; }
+.badge-waiting       { background: #fff3cd; color: #8a6100; }
+.badge-stopped       { background: #e1e4e8; color: #57606a; }
+@keyframes badge-pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.35; } }
 
 .cards {
   display: grid;
@@ -79,7 +100,6 @@ h1 { font-size: 18px; margin: 0 0 12px; }
   color: inherit;
 }
 .card-link:hover { text-decoration: none; }
-.card-state-error { border-color: #f5c6cb; }
 .card-state-stopped { background: #fbfbfb; }
 .card-header {
   display: flex;
@@ -209,7 +229,8 @@ a:hover { text-decoration: underline; }
 `;
 
 function badge(state: ActivityState): string {
-  return `<span class="badge badge-${state}">${STATE_LABEL_JA[state]}</span>`;
+  const tip = STATE_TOOLTIP_JA[state];
+  return `<span class="badge badge-${state}" title="${escapeHtml(tip)}">${STATE_LABEL_JA[state]}</span>`;
 }
 
 /** カード本文のプレビュー文字列を生成する。trim と末尾 … 付け。 */
@@ -306,72 +327,17 @@ const DASHBOARD_SCRIPT = `
 })();
 `;
 
-function renderDebugTable(entries: MonitorEntry[]): string {
-  const nowMs = Date.now();
-  const rows = entries.map(e => {
-    const mt = e.transcript?.mtimeMs;
-    const ageMs = mt ? nowMs - mt : undefined;
-    const ageStr = ageMs !== undefined
-      ? `${(ageMs / 1000).toFixed(1)}s`
-      : '—';
-    const mtIso = mt ? new Date(mt).toISOString() : '—';
-    return `<tr>
-      <td>${badge(e.state)}</td>
-      <td><code>${escapeHtml(e.cwd)}</code></td>
-      <td>${e.process ? 'yes' : 'no'}</td>
-      <td>${e.process?.pid ?? '—'}</td>
-      <td>${escapeHtml(mtIso)}<br><span style="color:#888">${escapeHtml(ageStr)}</span></td>
-      <td>${escapeHtml(e.tail?.lastEventKind ?? '—')}</td>
-      <td>${e.tail?.endsWithUnmatchedToolUse ? 'yes' : 'no'}</td>
-      <td>${e.transcript ? 'yes' : 'no'}</td>
-    </tr>`;
-  }).join('\n');
-  return `<details open style="margin: 12px 0">
-    <summary style="cursor:pointer; font-weight:600; font-size:13px; color:#1565c0">
-      🐞 デバッグ: 判定根拠 (state 分類入力)
-    </summary>
-    <div style="margin-top:8px">
-      <table>
-        <thead>
-          <tr>
-            <th>state</th>
-            <th>cwd</th>
-            <th>hasProcess</th>
-            <th>pid</th>
-            <th>jsonl mtime / age</th>
-            <th>lastEventKind</th>
-            <th>endsWithUnmatchedToolUse</th>
-            <th>hasTranscript</th>
-          </tr>
-        </thead>
-        <tbody>${rows}</tbody>
-      </table>
-      <div style="font-size:11px; color:#666; margin-top:6px">
-        生 JSON: <a href="/api/debug/processes" target="_blank">/api/debug/processes</a>
-        · <a href="/api/debug/entries" target="_blank">/api/debug/entries</a>
-      </div>
-    </div>
-  </details>`;
-}
-
-export interface RenderDashboardOptions {
-  /** ?debug=1 のとき判定根拠テーブルを描画する */
-  debug?: boolean;
-}
-
-export function renderDashboard(entries: MonitorEntry[], opts: RenderDashboardOptions = {}): string {
+export function renderDashboard(entries: MonitorEntry[]): string {
   const now = new Date().toISOString();
   const body = entries.length === 0
     ? `<div class="empty">稼働中の Claude Code CLI が見つかりません。</div>`
     : `<div class="cards">${entries.map(renderCard).join('\n')}</div>`;
-  const debugBlock = opts.debug ? renderDebugTable(entries) : '';
   return `<!doctype html>
 <html><head><meta charset="utf-8"><title>AI Monitor Dashboard</title>
 <style>${COMMON_STYLE}</style></head>
 <body>
   <h1>Dashboard</h1>
   <div class="meta">表示中 CLI: ${entries.length} 件 · 取得時刻: ${escapeHtml(now)}</div>
-  ${debugBlock}
   ${body}
   <script>${DASHBOARD_SCRIPT}</script>
 </body></html>`;

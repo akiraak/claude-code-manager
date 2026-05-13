@@ -292,6 +292,18 @@ export function lastTimestamp(events: NormalizedEvent[]): string | null {
   return null;
 }
 
+/**
+ * 末尾が未一致 tool_use のとき、そのツールが「ユーザー応答待ち」と見なせるツール名の集合。
+ *
+ * これらのツールは harness 側でユーザーに選択を促すため、tool_use が書かれた直後は
+ * CLI 自体は何も処理せずユーザー入力を待っている。state 判定では AI処理中 ではなく
+ * 待機中 に振り分けたい。
+ */
+const INTERACTIVE_TOOL_NAMES = new Set([
+  'AskUserQuestion',
+  'ExitPlanMode',
+]);
+
 export interface TailSummary {
   /** 末尾に近い user-text (meta は除外)。無ければ undefined。 */
   lastUserText?: string;
@@ -299,10 +311,13 @@ export interface TailSummary {
   /** 末尾に近い assistant-text。無ければ undefined。 */
   lastAssistantText?: string;
   lastAssistantAt?: string;
-  /** 末尾イベントの kind。state 判定 / デバッグ用。 */
+  /** 末尾イベントの kind。デバッグ用。 */
   lastEventKind?: EventKind;
-  /** 末尾が tool_use で、対応する tool_result が tail 内に無いか。エラー判定用。 */
-  endsWithUnmatchedToolUse: boolean;
+  /**
+   * 末尾が未一致 tool_use で、ツール名が `INTERACTIVE_TOOL_NAMES` に含まれるか。
+   * true のときは AI が処理中ではなくユーザー応答を待っている状態とみなす。
+   */
+  endsWithInteractiveToolUse: boolean;
 }
 
 /**
@@ -330,19 +345,15 @@ export function summarizeTail(events: NormalizedEvent[]): TailSummary {
   }
 
   let lastEventKind: EventKind | undefined;
-  let endsWithUnmatchedToolUse = false;
+  let endsWithInteractiveToolUse = false;
   if (events.length > 0) {
     const last = events[events.length - 1];
     lastEventKind = last.kind;
-    if (last.kind === 'tool-use') {
-      const id = last.toolUseId;
-      // toolUseId が無い tool_use は照合不能なので「未一致」扱い (安全側)
-      if (!id) {
-        endsWithUnmatchedToolUse = true;
-      } else {
-        const matched = events.some(e => e.kind === 'tool-result' && e.toolUseId === id);
-        endsWithUnmatchedToolUse = !matched;
-      }
+    if (last.kind === 'tool-use' && last.toolName && INTERACTIVE_TOOL_NAMES.has(last.toolName)) {
+      // 末尾が対話ツールの tool_use なら定義上「対応する tool_result はまだ存在しない」
+      // (応答済みなら tool_result が後ろに付くため末尾は別 kind)。したがってこの位置に
+      // 居る限り pending とみなす。toolUseId 照合は冗長なので省略。
+      endsWithInteractiveToolUse = true;
     }
   }
 
@@ -352,6 +363,6 @@ export function summarizeTail(events: NormalizedEvent[]): TailSummary {
     lastAssistantText,
     lastAssistantAt,
     lastEventKind,
-    endsWithUnmatchedToolUse,
+    endsWithInteractiveToolUse,
   };
 }

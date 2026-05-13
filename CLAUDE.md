@@ -58,6 +58,21 @@ upstream への反映は後追いで行う。
 - ポート変更は `VIBEBOARD_PORT` / `AI_MONITOR_PORT` 環境変数で指定可能。AI Monitor 側を変えた場合は `vibeboard.config.json` の `baseUrl` も合わせる
 - 読み取り専用。`~/.claude/projects/*/*.jsonl` と `/proc` のみを参照し、書き込み API は持たない
 
+### ダッシュボードの状態バッジ
+
+カード左上のバッジで 1 セッションの現在状態を 4 種類で示す。判定は `ai-monitor/src/state.ts` の `classifyV2`。
+
+| バッジ | 色 | 装飾 | 条件 |
+|---|---|---|---|
+| AI処理中 | 緑       | 脈動 | CLI 生存 + 直近 30 秒以内に jsonl 更新あり |
+| 入力待ち | オレンジ | 脈動 | CLI 生存 + 末尾が `AskUserQuestion` / `ExitPlanMode` の未一致 `tool_use` のみ |
+| 待機中   | 黄       | 静止 | CLI 生存 + 上記以外 (アイドル / 通常のターン終了) |
+| 停止     | 灰       | 静止 | CLI 消滅 (10 分だけ残る = `STOPPED_RETENTION_SEC = 600` 秒) |
+
+入力待ち は **明示的なユーザー応答ブロッカーのみ** に限定する方針 (通常の AI ターン終了は 待機中)。
+旧 `error` state は、対話ツール選択中に `/exit` した場合と本物のクラッシュを区別できず偽陽性が出るため `stopped` に統合した。
+突き合わせキーは `projectDir` (= `~/.claude/projects/<projectDir>/`)。セッション中に `cd` しても projectDir は不変なので 1 セッションが 1 カードにまとまる。
+
 ### AI 要約 (オプション)
 
 ダッシュボードのカードに「セッションは今何をしていてどこまで進んだか」を Claude API で 1〜2 行に要約して表示する。

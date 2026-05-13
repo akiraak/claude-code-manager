@@ -27,7 +27,7 @@ function readSummaryStatus(
   return { state: 'idle' };
 }
 
-export type ActivityState = 'ai-processing' | 'waiting' | 'stopped' | 'error';
+export type ActivityState = 'ai-processing' | 'awaiting-user' | 'waiting' | 'stopped';
 
 /** プロセス消滅後もダッシュボードに残す保持時間 (秒)。これを超えた jsonl は表示から落とす。 */
 export const STOPPED_RETENTION_SEC = 600;
@@ -80,24 +80,28 @@ export function decodeId(id: string): string | null {
 interface ClassifyInput {
   hasProcess: boolean;
   lastActivityAt?: string;
-  endsWithUnmatchedToolUse: boolean;
+  /** 末尾がユーザー応答待ちツール (AskUserQuestion / ExitPlanMode) の tool_use か */
+  endsWithInteractiveToolUse: boolean;
 }
 
 /**
- * 新 4 状態 (ai-processing / waiting / stopped / error) の判定。
+ * 4 状態 (ai-processing / awaiting-user / waiting / stopped) の判定。
  *
- * - プロセス生存 → 直近 30 秒で jsonl が動いたなら ai-processing、それ以外は waiting
- * - プロセス消滅 → 末尾が未一致 tool_use なら error、それ以外は stopped
- *   (stopped はさらに STOPPED_RETENTION_SEC のフィルタを buildEntries 側で行う)
+ * - プロセス生存:
+ *   - 末尾が対話ツール (`AskUserQuestion` / `ExitPlanMode`) で未一致 → awaiting-user
+ *   - jsonl が直近 30 秒以内に更新 → ai-processing
+ *   - それ以外 → waiting
+ * - プロセス消滅: stopped (STOPPED_RETENTION_SEC で表示から落とすのは buildEntries 側)
+ *
+ * 「死亡時にツール途中だったか」を旧 `error` で区別していたが、対話ツールの選択中に
+ * `/exit` した場合と本物のクラッシュを区別できず偽陽性が出るため統合した。
  */
 export function classifyV2(opts: ClassifyInput): ActivityState {
-  if (opts.hasProcess) {
-    const t = opts.lastActivityAt ? Date.parse(opts.lastActivityAt) : NaN;
-    if (Number.isFinite(t) && Date.now() - t <= AI_PROCESSING_FRESH_MS) return 'ai-processing';
-    return 'waiting';
-  }
-  if (opts.endsWithUnmatchedToolUse) return 'error';
-  return 'stopped';
+  if (!opts.hasProcess) return 'stopped';
+  if (opts.endsWithInteractiveToolUse) return 'awaiting-user';
+  const t = opts.lastActivityAt ? Date.parse(opts.lastActivityAt) : NaN;
+  if (Number.isFinite(t) && Date.now() - t <= AI_PROCESSING_FRESH_MS) return 'ai-processing';
+  return 'waiting';
 }
 
 /**
@@ -153,7 +157,7 @@ export async function buildEntries(opts: BuildEntriesOptions = {}): Promise<Moni
       state: classifyV2({
         hasProcess: true,
         lastActivityAt,
-        endsWithUnmatchedToolUse: tail?.endsWithUnmatchedToolUse ?? false,
+        endsWithInteractiveToolUse: tail?.endsWithInteractiveToolUse ?? false,
       }),
       summary,
     });
@@ -181,7 +185,7 @@ export async function buildEntries(opts: BuildEntriesOptions = {}): Promise<Moni
       state: classifyV2({
         hasProcess: false,
         lastActivityAt,
-        endsWithUnmatchedToolUse: tail.endsWithUnmatchedToolUse,
+        endsWithInteractiveToolUse: tail.endsWithInteractiveToolUse,
       }),
       summary,
     });

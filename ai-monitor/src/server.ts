@@ -1,9 +1,8 @@
 import path from 'path';
 import express, { Request, Response } from 'express';
-import { enumerateClaudeProcessCandidates, listClaudeProcesses } from './processes';
 import { buildEntries, decodeId, type ActivityState, type MonitorEntry } from './state';
 import { Summarizer } from './summarize';
-import { listTranscripts, projectsDir, readTailEvents } from './transcript';
+import { projectsDir, readTailEvents } from './transcript';
 import { renderDashboard, renderNotFound, renderProcessView } from './views';
 
 interface ServerOptions {
@@ -21,16 +20,16 @@ function noStore(res: Response): void {
 
 const STATE_MARK: Record<ActivityState, string> = {
   'ai-processing': '●',
+  'awaiting-user': '◆',
   'waiting': '◐',
   'stopped': '○',
-  'error': '⚠',
 };
 
 const STATE_SUB_JA: Record<ActivityState, string> = {
   'ai-processing': 'AI処理中',
+  'awaiting-user': '入力待ち',
   'waiting': '待機中',
   'stopped': '停止',
-  'error': 'エラー',
 };
 
 function buildSidebarItems(entries: MonitorEntry[]): Array<Record<string, string>> {
@@ -103,8 +102,7 @@ export function startServer(opts: ServerOptions): void {
     try {
       const entries = await buildEntries({ summarizer });
       if (itemId === 'dashboard' || itemId === '') {
-        const debug = req.query.debug === '1';
-        res.send(renderDashboard(entries, { debug }));
+        res.send(renderDashboard(entries));
         return;
       }
       if (itemId.startsWith('proc:')) {
@@ -241,87 +239,6 @@ export function startServer(opts: ServerOptions): void {
       clearInterval(pingInterval);
       summaryListeners.delete(onSummaryUpdate);
     });
-  });
-
-  // ──────────────────────────────────────────────────────────────
-  // Phase 1 デバッグ API (採取が終わったら削除する想定。CLAUDE.md / plan 参照)
-  //
-  // - /api/debug/processes : pgrep 候補ごとの comm / argv0 / cwd / 採否を JSON で返す
-  // - /api/debug/entries   : buildEntries の出力 + transcripts 生情報
-  // ──────────────────────────────────────────────────────────────
-
-  app.get('/api/debug/processes', async (_req: Request, res: Response) => {
-    noStore(res);
-    res.setHeader('Content-Type', 'application/json; charset=utf-8');
-    try {
-      const [candidates, accepted] = await Promise.all([
-        enumerateClaudeProcessCandidates(),
-        listClaudeProcesses(),
-      ]);
-      res.json({
-        selfPid: process.pid,
-        candidates,
-        accepted,
-        acceptedCount: accepted.length,
-        candidateCount: candidates.length,
-      });
-    } catch (err) {
-      console.warn('[ai-monitor] /api/debug/processes 失敗', err);
-      res.status(500).json({ error: String(err) });
-    }
-  });
-
-  app.get('/api/debug/entries', async (_req: Request, res: Response) => {
-    noStore(res);
-    res.setHeader('Content-Type', 'application/json; charset=utf-8');
-    try {
-      const [entries, transcripts, candidates] = await Promise.all([
-        buildEntries({ summarizer }),
-        Promise.resolve(listTranscripts()),
-        enumerateClaudeProcessCandidates(),
-      ]);
-      const now = Date.now();
-      res.json({
-        now,
-        entries: entries.map(e => ({
-          id: e.id,
-          projectDir: e.projectDir,
-          cwd: e.cwd,
-          state: e.state,
-          hasProcess: !!e.process,
-          pid: e.process?.pid,
-          transcript: e.transcript
-            ? {
-                jsonlPath: e.transcript.jsonlPath,
-                cwd: e.transcript.cwd,
-                mtimeMs: e.transcript.mtimeMs,
-                ageMs: now - e.transcript.mtimeMs,
-                sessionId: e.transcript.sessionId,
-              }
-            : null,
-          tail: e.tail
-            ? {
-                lastEventKind: e.tail.lastEventKind,
-                endsWithUnmatchedToolUse: e.tail.endsWithUnmatchedToolUse,
-                lastUserAt: e.tail.lastUserAt,
-                lastAssistantAt: e.tail.lastAssistantAt,
-              }
-            : null,
-        })),
-        transcripts: transcripts.map(t => ({
-          projectDir: t.projectDir,
-          jsonlPath: t.jsonlPath,
-          cwd: t.cwd,
-          mtimeMs: t.mtimeMs,
-          ageMs: now - t.mtimeMs,
-          sessionId: t.sessionId,
-        })),
-        processCandidates: candidates,
-      });
-    } catch (err) {
-      console.warn('[ai-monitor] /api/debug/entries 失敗', err);
-      res.status(500).json({ error: String(err) });
-    }
   });
 
   // ヘルスチェック / デバッグ用

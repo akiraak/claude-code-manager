@@ -1,5 +1,15 @@
 # DONE
 
+- 2026-05-12: 「入力待ち」state を追加 + エラー state を 停止 に統合 ([plan](docs/plans/archive/dashboard-state-awaiting-user-state.md))
+    - 最終的に **4 状態**: AI処理中 (緑脈動) / **入力待ち (オレンジ脈動・新)** / 待機中 (黄) / 停止 (灰)
+    - 入力待ち は **`AskUserQuestion` / `ExitPlanMode` の未一致 `tool_use` のみ** にスコープ限定 (通常のターン終了は 待機中)。複数 CLI 並行運用で 入力待ち が乱発しないよう絞った
+    - 旧 `error` (末尾が未一致 tool_use のまま CLI 消滅) は、対話ツール選択中に `/exit` した正常終了と区別できず偽陽性が出ていたため `stopped` に統合
+    - `classifyV2` の最終ロジック: 死亡 → stopped / 対話 tool pending → awaiting-user / mtime <30s → ai-processing / それ以外 → waiting
+- 2026-05-12: 動作中のプロセスが「停止中」と表示される問題の整理 ([plan](docs/plans/archive/dashboard-state-clarify.md), [追補](docs/plans/archive/dashboard-state-awaiting-user.md))
+    - Phase 1: `?debug=1` パネル / `/api/debug/*` で判定根拠を採取
+    - Phase 2: 突合キーを cwd → projectDir に変更し、cd 後も 1 セッション = 1 カードにまとめる
+    - Phase 3: バッジ色 (緑/黄/灰/赤) + 色付きドット + 脈動 + hover tooltip + state 定義表 (README, CLAUDE.md)
+    - 追補: 末尾が `AskUserQuestion` / `ExitPlanMode` の tool_use のときは mtime 関係なく **待機中** に分類 (Yes/No 選択待ちで「AI処理中」と出ていた問題)
 - 2026-05-12: ダッシュボード調整 ([plan](docs/plans/archive/dashboard-tweaks-2026-05-12.md))
     - cwd 表示を basename のみに (カード / サイドバー / プロセス詳細の h1)
     - 要約はボタン起動に変更 (リアルタイム自動要約を削除、POST /api/summarize 追加)
