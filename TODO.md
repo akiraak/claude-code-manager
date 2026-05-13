@@ -1,7 +1,10 @@
 # TODO
-- [ ] ダッシュボード カード化 + AI 要約 [plan](docs/plans/dashboard-cards-and-summary.md)
-  - [x] Phase 1: カード化 + 状態バッジ刷新 (AI処理中 / 待機中 / 停止 / エラー) + 停止 CLI を 10 分保持
-  - [x] Phase 2: AI 要約バックエンド (.env / dotenv / @anthropic-ai/sdk / キャッシュ)
-  - [ ] Phase 3: UI と要約の接続 / SSE 経由の自動更新
-  - [ ] Phase 4: README / CLAUDE.md 追記、DONE.md 移動、プラン archive
+
+## ダッシュボード
+- [ ] プロセスのディレクトリ名が助長。一番下だけでいい（例:claude-code-manager
+- [ ] 動作中のプロセスが「停止中」と表示される
+- [ ] 要約は要約ボタンで行うようにする。リアルタイムは削除
+- [ ] 要約は「要約」と先頭に付ける
+- [ ] 要素の並びは「ユーザー」「claude」「要約」
+
 - [ ] プロセスの表示はtool_useとtool_resultがほとんどなので、それはグループ化する。ユーザー入力と最終的な出力が見やすくなるようにする

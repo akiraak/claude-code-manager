@@ -58,6 +58,16 @@ upstream への反映は後追いで行う。
 - ポート変更は `VIBEBOARD_PORT` / `AI_MONITOR_PORT` 環境変数で指定可能。AI Monitor 側を変えた場合は `vibeboard.config.json` の `baseUrl` も合わせる
 - 読み取り専用。`~/.claude/projects/*/*.jsonl` と `/proc` のみを参照し、書き込み API は持たない
 
+### AI 要約 (オプション)
+
+ダッシュボードのカードに「セッションは今何をしていてどこまで進んだか」を Claude API で 1〜2 行に要約して表示する。
+
+- リポジトリ直下の `.env` (gitignore 済み) に `ANTHROPIC_API_KEY=...` を置くと有効になる。`ai-monitor` 起動時に `dotenv` で読む
+- モデル: `claude-haiku-4-5-20251001` 固定
+- キャッシュは `(jsonlPath, mtimeMs)` 単位のメモリ Map。サーバ再起動で消える
+- キー未設定でもサーバは落ちず、カードに「(要約: API キー未設定)」が薄色表示される
+- 要約完了は SSE (`event: item-changed { id: 'dashboard' }`) でクライアントへ push され、カードが自動更新される
+
 ## タスク管理ルール
 
 - タスクは `TODO.md` で管理する
