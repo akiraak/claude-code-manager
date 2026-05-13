@@ -28,6 +28,13 @@ function fmtRelativeTime(iso: string | undefined): string {
   return `${day}d ago`;
 }
 
+function fmtClockTime(iso: string | undefined): string {
+  if (!iso) return '--:--:--';
+  const t = Date.parse(iso);
+  if (!Number.isFinite(t)) return '--:--:--';
+  return new Date(t).toLocaleTimeString('ja-JP', { hour12: false });
+}
+
 const STATE_LABEL_JA: Record<ActivityState, string> = {
   'ai-processing': 'AI処理中',
   'awaiting-user': '入力待ち',
@@ -164,29 +171,40 @@ h1 { font-size: 18px; margin: 0 0 12px; }
   margin-right: 4px;
 }
 @keyframes card-summary-spin { to { transform: rotate(360deg); } }
-.card-user, .card-assistant {
-  border-top: 1px solid #f0f0f0;
-  padding-top: 8px;
-  margin-top: 6px;
-}
-.card-user:first-child, .card-assistant:first-child {
-  border-top: none;
-  padding-top: 0;
-  margin-top: 0;
-}
-.card-line-head { font-size: 11px; color: #666; margin-bottom: 2px; }
-.card-line-body {
+.card-terminal {
+  background: #1e1e1e;
+  border-radius: 6px;
+  padding: 10px 12px;
+  margin-top: 8px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
   font-size: 12px;
-  color: #333;
+  line-height: 1.5;
+  color: #d4d4d4;
+}
+.term-block + .term-block { margin-top: 8px; }
+.term-line {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  font-size: 11px;
+  margin-bottom: 2px;
+}
+.term-marker { flex: 0 0 auto; }
+.term-role { flex: 0 0 auto; font-weight: 600; letter-spacing: 0.5px; }
+.term-time { margin-left: auto; color: #808080; font-size: 11px; }
+.term-user .term-marker, .term-user .term-role { color: #4ec9b0; }
+.term-assistant .term-marker, .term-assistant .term-role { color: #dcdcaa; }
+.term-body {
   white-space: pre-wrap;
   word-break: break-word;
   display: -webkit-box;
   -webkit-line-clamp: 3;
   -webkit-box-orient: vertical;
   overflow: hidden;
-  max-height: 4.5em;
+  padding-left: 14px;
+  color: #d4d4d4;
 }
-.card-line-body.empty { color: #aaa; }
+.term-body.term-empty { color: #6a6a6a; font-style: italic; }
 
 table { width: 100%; border-collapse: collapse; font-size: 12px; background: #fff; }
 th, td { padding: 6px 10px; border-bottom: 1px solid #eee; text-align: left; vertical-align: top; }
@@ -273,11 +291,11 @@ function renderCard(entry: MonitorEntry): string {
   const userPreview = previewText(tail?.lastUserText);
   const assistantPreview = previewText(tail?.lastAssistantText);
   const userBody = userPreview
-    ? `<div class="card-line-body">${escapeHtml(userPreview)}</div>`
-    : `<div class="card-line-body empty">(まだユーザー入力がありません)</div>`;
+    ? `<div class="term-body">${escapeHtml(userPreview)}</div>`
+    : `<div class="term-body term-empty">(まだユーザー入力がありません)</div>`;
   const assistantBody = assistantPreview
-    ? `<div class="card-line-body">${escapeHtml(assistantPreview)}</div>`
-    : `<div class="card-line-body empty">(まだ Claude の返信がありません)</div>`;
+    ? `<div class="term-body">${escapeHtml(assistantPreview)}</div>`
+    : `<div class="term-body term-empty">(まだ Claude の返信がありません)</div>`;
   return `<div class="card card-state-${entry.state}">
     <a class="card-link" href="${href}" target="_top" title="${escapeHtml(entry.cwd)}">
       <div class="card-header">
@@ -285,13 +303,23 @@ function renderCard(entry: MonitorEntry): string {
         <span class="card-cwd">${escapeHtml(cwdShort)}</span>
         <span class="card-meta">${meta}</span>
       </div>
-      <div class="card-user">
-        <div class="card-line-head">👤 ユーザー (${escapeHtml(fmtRelativeTime(tail?.lastUserAt))})</div>
-        ${userBody}
-      </div>
-      <div class="card-assistant">
-        <div class="card-line-head">🤖 Claude (${escapeHtml(fmtRelativeTime(tail?.lastAssistantAt))})</div>
-        ${assistantBody}
+      <div class="card-terminal">
+        <div class="term-block term-user">
+          <div class="term-line">
+            <span class="term-marker">▶</span>
+            <span class="term-role">user</span>
+            <span class="term-time">${escapeHtml(fmtClockTime(tail?.lastUserAt))}</span>
+          </div>
+          ${userBody}
+        </div>
+        <div class="term-block term-assistant">
+          <div class="term-line">
+            <span class="term-marker">▶</span>
+            <span class="term-role">claude</span>
+            <span class="term-time">${escapeHtml(fmtClockTime(tail?.lastAssistantAt))}</span>
+          </div>
+          ${assistantBody}
+        </div>
       </div>
     </a>
     ${renderSummary(entry)}

@@ -1,5 +1,9 @@
 # DONE
 
+- 2026-05-12: ダッシュボードのユーザ入力 / AI 返信をターミナル風デザインに ([plan](docs/plans/archive/dashboard-terminal-style.md))
+    - カード内の `card-user` / `card-assistant` ブロックを `card-terminal` ラッパーに統合し、ダーク背景 (`#1e1e1e`) + 等幅で会話ログ感を演出
+    - `▶ user` (`#4ec9b0`) / `▶ claude` (`#dcdcaa`) ヘッダ + 右寄せ `HH:MM:SS` 時刻 (`fmtClockTime` 追加)。本文は line-clamp 3 行維持
+    - カードヘッダ (バッジ / cwd / PID / mtime) と AI 要約は白背景のまま、ターミナル枠だけ浮かせるレイアウト
 - 2026-05-12: AI Monitor タブを開いたら Dashboard が自動表示されるように ([plan](docs/plans/archive/ai-monitor-default-dashboard.md))
     - `renderCustomTabSidebar` でサイドバー描画完了時に、URL hash が item を指していなければ先頭項目へ `location.replace` で遷移
     - dashboard ID を vibeboard 側にハードコードせず、customTab 側が items の先頭を「初期表示」として返す約束を活用
