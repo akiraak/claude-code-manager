@@ -4,7 +4,7 @@ import { ensureAwaitingInputDir, watchAwaitingInputMarkers } from './awaiting-in
 import { buildEntries, decodeId, type ActivityState, type MonitorEntry } from './state';
 import { Summarizer } from './summarize';
 import { projectsDir, readTailEvents } from './transcript';
-import { renderDashboard, renderNotFound, renderProcessView } from './views';
+import { buildProcessViewData, entryToDashboardCardData, renderDashboard, renderNotFound, renderProcessView } from './views';
 
 interface ServerOptions {
   port: number;
@@ -84,6 +84,57 @@ export function startServer(opts: ServerOptions): void {
   app.use((_req, res, next) => {
     corsHeaders(res);
     next();
+  });
+
+  // Phase 1 で追加。ダッシュボード iframe を自己更新化するための軽量 JSON API。
+  // `renderDashboard` と同じ整形ロジック (entryToDashboardCardData) を共有するので、
+  // クライアント側で時刻フォーマット / preview 切り詰めを再実装する必要はない。
+  app.get('/api/dashboard.json', async (_req: Request, res: Response) => {
+    try {
+      const entries = await buildEntries({ summarizer });
+      noStore(res);
+      res.setHeader('Content-Type', 'application/json; charset=utf-8');
+      res.json({
+        renderedAt: new Date().toISOString(),
+        entries: entries.map(entryToDashboardCardData),
+      });
+    } catch (err) {
+      console.warn('[ai-monitor] /api/dashboard.json 失敗', err);
+      res.status(500).json({
+        renderedAt: new Date().toISOString(),
+        entries: [],
+        error: 'failed',
+      });
+    }
+  });
+
+  // Phase 4 で追加。プロセス詳細 iframe を自己更新化するための軽量 JSON API。
+  // renderProcessView と同じ整形ロジック (buildProcessViewData) を共有する。
+  app.get('/api/process.json', async (req: Request, res: Response) => {
+    res.setHeader('Content-Type', 'application/json; charset=utf-8');
+    noStore(res);
+    try {
+      const itemId = String(req.query.id ?? '');
+      if (!itemId.startsWith('proc:')) {
+        res.status(400).json({ error: 'invalid id' });
+        return;
+      }
+      const projectDir = decodeId(itemId.slice('proc:'.length));
+      if (!projectDir) {
+        res.status(400).json({ error: 'invalid id' });
+        return;
+      }
+      const entries = await buildEntries({ summarizer });
+      const entry = entries.find(e => e.projectDir === projectDir);
+      if (!entry) {
+        res.status(404).json({ error: 'not found' });
+        return;
+      }
+      res.json(buildProcessViewData(entry));
+    } catch (err) {
+      console.warn('[ai-monitor] /api/process.json 失敗', err);
+      res.status(500).json({ error: 'internal' });
+    }
   });
 
   app.get('/api/sidebar', async (_req: Request, res: Response) => {
@@ -266,12 +317,12 @@ export function startServer(opts: ServerOptions): void {
 
   // ヘルスチェック / デバッグ用
   app.get('/', (_req: Request, res: Response) => {
-    res.type('text').send('ai-monitor: see /api/sidebar, /view?item=dashboard, /api/watch');
+    res.type('text').send('ai-monitor: see /api/sidebar, /api/dashboard.json, /api/process.json?id=proc:<id>, /view?item=dashboard, /api/watch');
   });
 
   app.listen(opts.port, opts.host, () => {
     console.log(`[ai-monitor] running at http://${opts.host}:${opts.port}`);
     console.log(`[ai-monitor] projects dir: ${projectsDir()}`);
-    console.log('[ai-monitor] endpoints: /api/sidebar, /view?item=..., /api/watch');
+    console.log('[ai-monitor] endpoints: /api/sidebar, /api/dashboard.json, /api/process.json, /view?item=..., /api/watch');
   });
 }

@@ -1,5 +1,20 @@
 # DONE
 
+- 2026-05-13: ダッシュボード更新時に画面がちらつくのを修正 ([plan](docs/plans/archive/dashboard-flicker-fix.md))
+    - 旧実装は親 vibeboard が SSE `item-changed` を受けるたびに iframe.src を差し替えていたため、白フラッシュ + バッジ脈動アニメの先頭リセット + スクロール位置リセットが起きていた
+    - Phase 1: `/api/dashboard.json` を新設。`entryToDashboardCardData` で `renderDashboard` と JSON API のカード整形ロジックを純関数化して共有 (時刻フォーマット / preview 切り詰めをサーバ側に閉じ込め、クライアントに重複ロジックを置かない)
+    - Phase 2: ダッシュボード iframe を自己更新化。各カードに `data-card-id="proc:<id>"` を付け、iframe 内 inline script で `/api/watch` を直接購読 → `/api/dashboard.json` 取得 → カード単位の DOM 差分パッチ (新規/更新/削除/並べ替え)。badge / cwd / meta / term-time / term-body / summary を個別書き換えし、既存ノードは触らないので脈動アニメも継続
+    - Phase 3: `vibeboard/src/web/app.js` の `item-changed` ハンドラで `payload.id === 'dashboard'` を skip
+    - Phase 4: プロセス詳細 (`proc:*`) も同パターンで自己更新化。`/api/process.json?id=` を新設、`buildProcessViewData` で純関数化。イベントごとの安定キー (`index|timestamp|kind|toolUseId|hash(text)`) で末尾差分パッチ、ヘッダ (PID / badge / 最終活動 / session) も個別書き換え。`app.js` の skip 条件を `proc:*` にも拡張
+- 2026-05-13: ダッシュボードのカードクリックでプロセス詳細ページに遷移 ([plan](docs/plans/archive/card-link-to-process-detail.md))
+    - 旧実装は `<a href="#ai-monitor/proc:..." target="_top">` で iframe (8181) を基準にフラグメント解決していたため vibeboard (8180) の枠を破ってダッシュボード全画面化していた
+    - ai-monitor: `renderCard` の hash を `encodeURIComponent` 形式に揃え、`target="_top"` を外し `data-hash` を埋め込み。`DASHBOARD_SCRIPT` で `.card-link` クリックを横取りし `parent.postMessage({ type: 'vb-nav', hash })` を送る
+    - vibeboard: `app.js` に `message` リスナを追加。`vb-nav` を受けたら `location.hash = data.hash` を設定し既存 `handleRoute` に乗せる
+    - 中クリック / Ctrl+クリック / Shift / Alt は素通りさせ、ブラウザネイティブの新規タブ等の挙動を温存
+- 2026-05-13: 停止中のプロセスがダッシュボードに表示されるかの調査 + retention 延長 ([plan](docs/plans/archive/stopped-process-visibility.md))
+    - 案 B として `STOPPED_RETENTION_SEC` を 600s → 86,400s (24h) に延長。直近 24h で止まった projectDir は停止カードに表示される
+    - jsonl 調査で「セッション間に親子関係を表すフィールドは存在しない」ことを確認 (各 jsonl は `parentUuid: None` のルートで独立)
+    - 同一 projectDir では「動いてる 1 本 / なければ最新の停止 1 本」を代表として見せる現挙動が、ユーザー方針 (同一ディレクトリでは代表 1 本のみ意識) と一致するため、案 A (sessionId ベース化) ・案 C (別タブ) は不要と判断して終了
 - 2026-05-13: `/clear` などスラッシュコマンド直後にダッシュボードが「AI処理中」になる問題を修正 ([plan](docs/plans/archive/dashboard-state-after-slash-command.md))
     - jsonl 末尾が `system` (`subtype: local_command`) のときは AI が呼ばれていないとみなし、`classifyV2` が mtime に関わらず `waiting` を返すよう変更
     - `NormalizedEvent.systemSubtype` を追加し、`readTailEvents` の system 分岐で `obj.subtype` を保持

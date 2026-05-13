@@ -1623,6 +1623,11 @@ function ensureCustomTabSource(name) {
     let payload;
     try { payload = JSON.parse(e.data); } catch { return; }
     if (!payload || typeof payload.id !== 'string') return;
+    // ai-monitor の dashboard / proc:* は iframe 内 inline script が SSE を直接購読して
+    // カード or event 一覧を DOM 差分パッチで自己更新するため、親側で iframe.src を
+    // 触ってはいけない (毎回再ロードするとちらつき・脈動アニメのリセット・スクロール
+    // 位置のリセットが起きる)。
+    if (payload.id === 'dashboard' || payload.id.startsWith('proc:')) return;
     // 表示中の item がこの id なら iframe を reload
     if (
       customTabState.iframe
@@ -1666,4 +1671,22 @@ async function init() {
 }
 
 window.addEventListener('hashchange', handleRoute);
+
+// customTab iframe (例: ai-monitor) からの遷移要求を受け取る。
+// iframe から直接 `target="_top"` でフラグメント遷移すると iframe のオリジンで
+// URL が解決されてしまうため、postMessage 経由で vibeboard のハッシュを書き換える。
+window.addEventListener('message', (ev) => {
+  const data = ev && ev.data;
+  if (!data || typeof data !== 'object') return;
+  if (data.type !== 'vb-nav') return;
+  if (typeof data.hash !== 'string' || !data.hash) return;
+  const next = `#${data.hash}`;
+  if (location.hash === next) {
+    // 同一 hash なら hashchange が発火しないので明示的に呼ぶ
+    handleRoute();
+  } else {
+    location.hash = data.hash;
+  }
+});
+
 init();
