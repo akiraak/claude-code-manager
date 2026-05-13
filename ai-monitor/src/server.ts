@@ -1,7 +1,9 @@
+import path from 'path';
 import express, { Request, Response } from 'express';
+import { enumerateClaudeProcessCandidates, listClaudeProcesses } from './processes';
 import { buildEntries, decodeId, type ActivityState, type MonitorEntry } from './state';
 import { Summarizer } from './summarize';
-import { projectsDir } from './transcript';
+import { listTranscripts, projectsDir, readTailEvents } from './transcript';
 import { renderDashboard, renderNotFound, renderProcessView } from './views';
 
 interface ServerOptions {
@@ -45,7 +47,7 @@ function buildSidebarItems(entries: MonitorEntry[]): Array<Record<string, string
     const pidPart = pid !== undefined ? `PID ${pid}` : 'PID —';
     items.push({
       id: `proc:${e.id}`,
-      label: e.cwd,
+      label: path.basename(e.cwd) || e.cwd,
       sub: `${pidPart} · ${STATE_SUB_JA[e.state]}`,
       group: 'processes',
       badge: STATE_MARK[e.state],
@@ -101,19 +103,20 @@ export function startServer(opts: ServerOptions): void {
     try {
       const entries = await buildEntries({ summarizer });
       if (itemId === 'dashboard' || itemId === '') {
-        res.send(renderDashboard(entries));
+        const debug = req.query.debug === '1';
+        res.send(renderDashboard(entries, { debug }));
         return;
       }
       if (itemId.startsWith('proc:')) {
         const id = itemId.slice('proc:'.length);
-        const cwd = decodeId(id);
-        if (!cwd) {
+        const projectDir = decodeId(id);
+        if (!projectDir) {
           res.status(400).send(renderNotFound('item id が不正です'));
           return;
         }
-        const entry = entries.find(e => e.cwd === cwd);
+        const entry = entries.find(e => e.projectDir === projectDir);
         if (!entry) {
-          res.status(404).send(renderNotFound(`プロセスが見つかりません: ${cwd}`));
+          res.status(404).send(renderNotFound(`プロセスが見つかりません: ${projectDir}`));
           return;
         }
         res.send(renderProcessView(entry));
@@ -123,6 +126,43 @@ export function startServer(opts: ServerOptions): void {
     } catch (err) {
       console.warn('[ai-monitor] /view 失敗', err);
       res.status(500).send(renderNotFound('内部エラーが発生しました'));
+    }
+  });
+
+  // 「要約」ボタン押下時の手動トリガ。
+  // - 該当 entry を探し、jsonl から末尾イベントを読んで `getOrCompute` に渡す
+  // - 即座に現在の状態 (idle/pending/ok/unavailable/error) を返す
+  // - 完了時の通知は既存の onUpdate → SSE item-changed で行う (UI 側で iframe reload)
+  app.post('/api/summarize', async (req: Request, res: Response) => {
+    res.setHeader('Content-Type', 'application/json; charset=utf-8');
+    noStore(res);
+    try {
+      const itemId = String(req.query.id ?? '');
+      if (!itemId.startsWith('proc:')) {
+        res.status(400).json({ error: 'invalid id' });
+        return;
+      }
+      const projectDir = decodeId(itemId.slice('proc:'.length));
+      if (!projectDir) {
+        res.status(400).json({ error: 'invalid id' });
+        return;
+      }
+      const entries = await buildEntries({ summarizer });
+      const entry = entries.find(e => e.projectDir === projectDir);
+      if (!entry || !entry.transcript) {
+        res.status(404).json({ error: 'not found' });
+        return;
+      }
+      if (!summarizer.isEnabled()) {
+        res.json({ state: 'unavailable' });
+        return;
+      }
+      const events = readTailEvents(entry.transcript.jsonlPath, 50);
+      const result = summarizer.getOrCompute(entry.transcript.jsonlPath, entry.transcript.mtimeMs, events);
+      res.json(result);
+    } catch (err) {
+      console.warn('[ai-monitor] /api/summarize 失敗', err);
+      res.status(500).json({ error: 'internal' });
     }
   });
 
@@ -201,6 +241,87 @@ export function startServer(opts: ServerOptions): void {
       clearInterval(pingInterval);
       summaryListeners.delete(onSummaryUpdate);
     });
+  });
+
+  // ──────────────────────────────────────────────────────────────
+  // Phase 1 デバッグ API (採取が終わったら削除する想定。CLAUDE.md / plan 参照)
+  //
+  // - /api/debug/processes : pgrep 候補ごとの comm / argv0 / cwd / 採否を JSON で返す
+  // - /api/debug/entries   : buildEntries の出力 + transcripts 生情報
+  // ──────────────────────────────────────────────────────────────
+
+  app.get('/api/debug/processes', async (_req: Request, res: Response) => {
+    noStore(res);
+    res.setHeader('Content-Type', 'application/json; charset=utf-8');
+    try {
+      const [candidates, accepted] = await Promise.all([
+        enumerateClaudeProcessCandidates(),
+        listClaudeProcesses(),
+      ]);
+      res.json({
+        selfPid: process.pid,
+        candidates,
+        accepted,
+        acceptedCount: accepted.length,
+        candidateCount: candidates.length,
+      });
+    } catch (err) {
+      console.warn('[ai-monitor] /api/debug/processes 失敗', err);
+      res.status(500).json({ error: String(err) });
+    }
+  });
+
+  app.get('/api/debug/entries', async (_req: Request, res: Response) => {
+    noStore(res);
+    res.setHeader('Content-Type', 'application/json; charset=utf-8');
+    try {
+      const [entries, transcripts, candidates] = await Promise.all([
+        buildEntries({ summarizer }),
+        Promise.resolve(listTranscripts()),
+        enumerateClaudeProcessCandidates(),
+      ]);
+      const now = Date.now();
+      res.json({
+        now,
+        entries: entries.map(e => ({
+          id: e.id,
+          projectDir: e.projectDir,
+          cwd: e.cwd,
+          state: e.state,
+          hasProcess: !!e.process,
+          pid: e.process?.pid,
+          transcript: e.transcript
+            ? {
+                jsonlPath: e.transcript.jsonlPath,
+                cwd: e.transcript.cwd,
+                mtimeMs: e.transcript.mtimeMs,
+                ageMs: now - e.transcript.mtimeMs,
+                sessionId: e.transcript.sessionId,
+              }
+            : null,
+          tail: e.tail
+            ? {
+                lastEventKind: e.tail.lastEventKind,
+                endsWithUnmatchedToolUse: e.tail.endsWithUnmatchedToolUse,
+                lastUserAt: e.tail.lastUserAt,
+                lastAssistantAt: e.tail.lastAssistantAt,
+              }
+            : null,
+        })),
+        transcripts: transcripts.map(t => ({
+          projectDir: t.projectDir,
+          jsonlPath: t.jsonlPath,
+          cwd: t.cwd,
+          mtimeMs: t.mtimeMs,
+          ageMs: now - t.mtimeMs,
+          sessionId: t.sessionId,
+        })),
+        processCandidates: candidates,
+      });
+    } catch (err) {
+      console.warn('[ai-monitor] /api/debug/entries 失敗', err);
+      res.status(500).json({ error: String(err) });
+    }
   });
 
   // ヘルスチェック / デバッグ用

@@ -1,7 +1,7 @@
 import Anthropic from '@anthropic-ai/sdk';
 import type { NormalizedEvent } from './transcript';
 
-export type SummaryState = 'ok' | 'pending' | 'unavailable' | 'error';
+export type SummaryState = 'idle' | 'ok' | 'pending' | 'unavailable' | 'error';
 
 export interface SummaryResult {
   state: SummaryState;
@@ -61,6 +61,11 @@ export class Summarizer {
   /** キャッシュにあれば返す。無ければ undefined。Phase 3 で SSE 通知時の参照に使う。 */
   peek(jsonlPath: string, mtimeMs: number): SummaryResult | undefined {
     return this.cache.get(this.cacheKey(jsonlPath, mtimeMs));
+  }
+
+  /** 計算中 (inflight) かどうか。`getOrCompute` を呼ばずに状態だけ知りたいときに使う。 */
+  isInflight(jsonlPath: string, mtimeMs: number): boolean {
+    return this.inflight.has(this.cacheKey(jsonlPath, mtimeMs));
   }
 
   /**

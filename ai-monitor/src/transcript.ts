@@ -135,6 +135,22 @@ export function projectsDir(): string {
   return PROJECTS_DIR;
 }
 
+/**
+ * cwd を Claude Code が `~/.claude/projects/` 配下に作るディレクトリ名 (= `projectDir`)
+ * に変換する。観測上、claude CLI は cwd の非英数字を全て `-` に置換した名前で
+ * `projects/<encoded>/...jsonl` を保存する。
+ *
+ * - `/home/ubuntu/foo` → `-home-ubuntu-foo`
+ * - `/home/ubuntu/foo/.claude/worktrees/bar` → `-home-ubuntu-foo--claude-worktrees-bar`
+ *
+ * 元 cwd への逆変換は (元の `-` が `/` 由来か元から `-` だったか曖昧で) できない。
+ * このプロジェクトでは「同じ CLI セッション (launch dir 由来) を一意に束ねる」用途で
+ * 前方変換だけを使う。
+ */
+export function cwdToProjectDir(cwd: string): string {
+  return cwd.replace(/[^A-Za-z0-9]/g, '-');
+}
+
 /** message.content から表示用のテキストを 1 つ取り出す (短くトリミングは呼び出し側で行う)。 */
 function stringifyToolResultContent(content: unknown): string {
   if (typeof content === 'string') return content;

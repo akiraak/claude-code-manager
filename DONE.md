@@ -1,5 +1,10 @@
 # DONE
 
+- 2026-05-12: ダッシュボード調整 ([plan](docs/plans/archive/dashboard-tweaks-2026-05-12.md))
+    - cwd 表示を basename のみに (カード / サイドバー / プロセス詳細の h1)
+    - 要約はボタン起動に変更 (リアルタイム自動要約を削除、POST /api/summarize 追加)
+    - 要約本文の先頭に「要約: 」を付与
+    - カード内要素順を ユーザー → Claude → 要約 に変更
 - 2026-05-12: ダッシュボード カード化 + AI 要約 ([plan](docs/plans/archive/dashboard-cards-and-summary.md))
     - Phase 1: カード化 + 状態バッジ刷新 (AI処理中 / 待機中 / 停止 / エラー) + 停止 CLI を 10 分保持
     - Phase 2: AI 要約バックエンド (.env / dotenv / @anthropic-ai/sdk / キャッシュ)

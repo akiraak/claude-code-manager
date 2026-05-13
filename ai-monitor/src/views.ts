@@ -1,3 +1,4 @@
+import path from 'path';
 import type { ActivityState, MonitorEntry } from './state';
 import type { SummaryResult } from './summarize';
 import { readTailEvents, type NormalizedEvent } from './transcript';
@@ -69,11 +70,15 @@ h1 { font-size: 18px; margin: 0 0 12px; }
   border: 1px solid #e5e5e5;
   border-radius: 8px;
   padding: 12px 14px;
-  text-decoration: none;
-  color: inherit;
   transition: border-color 0.1s, box-shadow 0.1s;
 }
 .card:hover { border-color: #bbb; box-shadow: 0 2px 6px rgba(0,0,0,0.04); }
+.card-link {
+  display: block;
+  text-decoration: none;
+  color: inherit;
+}
+.card-link:hover { text-decoration: none; }
 .card-state-error { border-color: #f5c6cb; }
 .card-state-stopped { background: #fbfbfb; }
 .card-header {
@@ -94,11 +99,13 @@ h1 { font-size: 18px; margin: 0 0 12px; }
 .card-summary {
   color: #333;
   font-size: 12px;
-  margin-bottom: 8px;
   display: flex;
   align-items: flex-start;
   gap: 6px;
   line-height: 1.5;
+  border-top: 1px solid #f0f0f0;
+  padding-top: 8px;
+  margin-top: 6px;
 }
 .card-summary:empty { display: none; }
 .card-summary-muted { color: #999; font-style: italic; }
@@ -112,6 +119,19 @@ h1 { font-size: 18px; margin: 0 0 12px; }
   -webkit-box-orient: vertical;
   overflow: hidden;
 }
+.summarize-btn {
+  display: inline-block;
+  padding: 3px 10px;
+  font-size: 12px;
+  font-family: inherit;
+  color: #1565c0;
+  background: #fff;
+  border: 1px solid #c5dafd;
+  border-radius: 4px;
+  cursor: pointer;
+}
+.summarize-btn:hover { background: #f1f7ff; border-color: #1565c0; }
+.summarize-btn:disabled { color: #888; background: #f5f5f5; border-color: #ddd; cursor: default; }
 .spinner {
   display: inline-block;
   width: 10px;
@@ -128,6 +148,11 @@ h1 { font-size: 18px; margin: 0 0 12px; }
   border-top: 1px solid #f0f0f0;
   padding-top: 8px;
   margin-top: 6px;
+}
+.card-user:first-child, .card-assistant:first-child {
+  border-top: none;
+  padding-top: 0;
+  margin-top: 0;
 }
 .card-line-head { font-size: 11px; color: #666; margin-bottom: 2px; }
 .card-line-body {
@@ -195,10 +220,12 @@ function previewText(s: string | undefined, maxChars = 240): string {
   return `${cleaned.slice(0, maxChars)}…`;
 }
 
-function renderSummary(summary: SummaryResult | undefined): string {
+function renderSummary(entry: MonitorEntry): string {
+  const summary = entry.summary;
   if (!summary) return '';
+  const itemId = `proc:${entry.id}`;
   if (summary.state === 'ok' && summary.text) {
-    return `<div class="card-summary"><span class="card-summary-icon">📝</span><span class="card-summary-text">${escapeHtml(summary.text)}</span></div>`;
+    return `<div class="card-summary"><span class="card-summary-icon">📝</span><span class="card-summary-text">要約: ${escapeHtml(summary.text)}</span></div>`;
   }
   if (summary.state === 'pending') {
     return `<div class="card-summary card-summary-pending"><span class="spinner"></span><span class="card-summary-text">要約中…</span></div>`;
@@ -207,12 +234,20 @@ function renderSummary(summary: SummaryResult | undefined): string {
     return `<div class="card-summary card-summary-muted"><span class="card-summary-text">(要約: API キー未設定)</span></div>`;
   }
   if (summary.state === 'error') {
-    return `<div class="card-summary card-summary-muted"><span class="card-summary-text">(要約失敗)</span></div>`;
+    return `<div class="card-summary card-summary-muted"><span class="card-summary-text">(要約失敗) — もう一度試す場合は再度ボタンを押してください</span></div>`;
+  }
+  if (summary.state === 'idle') {
+    return `<div class="card-summary"><button type="button" class="summarize-btn" data-item-id="${escapeHtml(itemId)}">要約</button></div>`;
   }
   return '';
 }
 
-function renderCardBody(entry: MonitorEntry): string {
+function renderCard(entry: MonitorEntry): string {
+  const href = `#ai-monitor/proc:${escapeHtml(entry.id)}`;
+  const pid = entry.process?.pid;
+  const pidPart = pid !== undefined ? `PID ${escapeHtml(String(pid))} · ` : '';
+  const meta = `${pidPart}${escapeHtml(fmtRelativeTime(entry.lastActivityAt))}`;
+  const cwdShort = path.basename(entry.cwd) || entry.cwd;
   const tail = entry.tail;
   const userPreview = previewText(tail?.lastUserText);
   const assistantPreview = previewText(tail?.lastAssistantText);
@@ -222,45 +257,123 @@ function renderCardBody(entry: MonitorEntry): string {
   const assistantBody = assistantPreview
     ? `<div class="card-line-body">${escapeHtml(assistantPreview)}</div>`
     : `<div class="card-line-body empty">(まだ Claude の返信がありません)</div>`;
-  return `
-    ${renderSummary(entry.summary)}
-    <div class="card-user">
-      <div class="card-line-head">👤 ユーザー (${escapeHtml(fmtRelativeTime(tail?.lastUserAt))})</div>
-      ${userBody}
-    </div>
-    <div class="card-assistant">
-      <div class="card-line-head">🤖 Claude (${escapeHtml(fmtRelativeTime(tail?.lastAssistantAt))})</div>
-      ${assistantBody}
-    </div>`;
+  return `<div class="card card-state-${entry.state}">
+    <a class="card-link" href="${href}" target="_top" title="${escapeHtml(entry.cwd)}">
+      <div class="card-header">
+        ${badge(entry.state)}
+        <span class="card-cwd">${escapeHtml(cwdShort)}</span>
+        <span class="card-meta">${meta}</span>
+      </div>
+      <div class="card-user">
+        <div class="card-line-head">👤 ユーザー (${escapeHtml(fmtRelativeTime(tail?.lastUserAt))})</div>
+        ${userBody}
+      </div>
+      <div class="card-assistant">
+        <div class="card-line-head">🤖 Claude (${escapeHtml(fmtRelativeTime(tail?.lastAssistantAt))})</div>
+        ${assistantBody}
+      </div>
+    </a>
+    ${renderSummary(entry)}
+  </div>`;
 }
 
-function renderCard(entry: MonitorEntry): string {
-  const href = `#ai-monitor/proc:${escapeHtml(entry.id)}`;
-  const pid = entry.process?.pid;
-  const pidPart = pid !== undefined ? `PID ${escapeHtml(String(pid))} · ` : '';
-  const meta = `${pidPart}${escapeHtml(fmtRelativeTime(entry.lastActivityAt))}`;
-  return `<a class="card card-state-${entry.state}" href="${href}" target="_top">
-    <div class="card-header">
-      ${badge(entry.state)}
-      <span class="card-cwd">${escapeHtml(entry.cwd)}</span>
-      <span class="card-meta">${meta}</span>
+// 要約ボタン押下時のクライアント処理。
+// POST /api/summarize 呼び出し → 即座にボタンを「要約中…」表示に切り替え、
+// 完了通知は親 (vibeboard) 側で SSE → iframe reload に乗るのでここでは待たない。
+const DASHBOARD_SCRIPT = `
+(function() {
+  document.addEventListener('click', function(ev) {
+    var t = ev.target;
+    if (!t || !t.classList || !t.classList.contains('summarize-btn')) return;
+    ev.preventDefault();
+    ev.stopPropagation();
+    var id = t.getAttribute('data-item-id');
+    if (!id) return;
+    var wrap = t.parentNode;
+    if (wrap) {
+      wrap.className = 'card-summary card-summary-pending';
+      wrap.innerHTML = '<span class="spinner"></span><span class="card-summary-text">要約中…</span>';
+    }
+    fetch('/api/summarize?id=' + encodeURIComponent(id), { method: 'POST' })
+      .catch(function(err) {
+        if (wrap) {
+          wrap.className = 'card-summary card-summary-muted';
+          wrap.innerHTML = '<span class="card-summary-text">(要約呼び出しに失敗)</span>';
+        }
+        console.warn('summarize failed', err);
+      });
+  });
+})();
+`;
+
+function renderDebugTable(entries: MonitorEntry[]): string {
+  const nowMs = Date.now();
+  const rows = entries.map(e => {
+    const mt = e.transcript?.mtimeMs;
+    const ageMs = mt ? nowMs - mt : undefined;
+    const ageStr = ageMs !== undefined
+      ? `${(ageMs / 1000).toFixed(1)}s`
+      : '—';
+    const mtIso = mt ? new Date(mt).toISOString() : '—';
+    return `<tr>
+      <td>${badge(e.state)}</td>
+      <td><code>${escapeHtml(e.cwd)}</code></td>
+      <td>${e.process ? 'yes' : 'no'}</td>
+      <td>${e.process?.pid ?? '—'}</td>
+      <td>${escapeHtml(mtIso)}<br><span style="color:#888">${escapeHtml(ageStr)}</span></td>
+      <td>${escapeHtml(e.tail?.lastEventKind ?? '—')}</td>
+      <td>${e.tail?.endsWithUnmatchedToolUse ? 'yes' : 'no'}</td>
+      <td>${e.transcript ? 'yes' : 'no'}</td>
+    </tr>`;
+  }).join('\n');
+  return `<details open style="margin: 12px 0">
+    <summary style="cursor:pointer; font-weight:600; font-size:13px; color:#1565c0">
+      🐞 デバッグ: 判定根拠 (state 分類入力)
+    </summary>
+    <div style="margin-top:8px">
+      <table>
+        <thead>
+          <tr>
+            <th>state</th>
+            <th>cwd</th>
+            <th>hasProcess</th>
+            <th>pid</th>
+            <th>jsonl mtime / age</th>
+            <th>lastEventKind</th>
+            <th>endsWithUnmatchedToolUse</th>
+            <th>hasTranscript</th>
+          </tr>
+        </thead>
+        <tbody>${rows}</tbody>
+      </table>
+      <div style="font-size:11px; color:#666; margin-top:6px">
+        生 JSON: <a href="/api/debug/processes" target="_blank">/api/debug/processes</a>
+        · <a href="/api/debug/entries" target="_blank">/api/debug/entries</a>
+      </div>
     </div>
-    ${renderCardBody(entry)}
-  </a>`;
+  </details>`;
 }
 
-export function renderDashboard(entries: MonitorEntry[]): string {
+export interface RenderDashboardOptions {
+  /** ?debug=1 のとき判定根拠テーブルを描画する */
+  debug?: boolean;
+}
+
+export function renderDashboard(entries: MonitorEntry[], opts: RenderDashboardOptions = {}): string {
   const now = new Date().toISOString();
   const body = entries.length === 0
     ? `<div class="empty">稼働中の Claude Code CLI が見つかりません。</div>`
     : `<div class="cards">${entries.map(renderCard).join('\n')}</div>`;
+  const debugBlock = opts.debug ? renderDebugTable(entries) : '';
   return `<!doctype html>
 <html><head><meta charset="utf-8"><title>AI Monitor Dashboard</title>
 <style>${COMMON_STYLE}</style></head>
 <body>
   <h1>Dashboard</h1>
   <div class="meta">表示中 CLI: ${entries.length} 件 · 取得時刻: ${escapeHtml(now)}</div>
+  ${debugBlock}
   ${body}
+  <script>${DASHBOARD_SCRIPT}</script>
 </body></html>`;
 }
 
@@ -311,14 +424,18 @@ export function renderProcessView(entry: MonitorEntry): string {
     ? `${entry.lastActivityAt} (${fmtRelativeTime(entry.lastActivityAt)})`
     : '—';
   const sessionId = entry.transcript?.sessionId ?? '—';
+  const cwdShort = path.basename(entry.cwd) || entry.cwd;
   const eventsHtml = events.length === 0
     ? `<div class="empty">表示できるイベントがありません (jsonl が無いか空)。</div>`
     : events.map(renderEvent).join('\n');
   return `<!doctype html>
-<html><head><meta charset="utf-8"><title>${escapeHtml(entry.cwd)}</title>
+<html><head><meta charset="utf-8"><title>${escapeHtml(cwdShort)}</title>
 <style>${COMMON_STYLE}</style></head>
 <body>
-  <h1>${escapeHtml(entry.cwd)}</h1>
+  <h1 title="${escapeHtml(entry.cwd)}">${escapeHtml(cwdShort)}</h1>
+  <div class="meta">
+    <code>${escapeHtml(entry.cwd)}</code>
+  </div>
   <div class="meta">
     PID: <code>${escapeHtml(String(entry.process?.pid ?? '—'))}</code>
     · ${badge(entry.state)}
