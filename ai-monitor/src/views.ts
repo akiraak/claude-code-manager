@@ -1,4 +1,4 @@
-import type { MonitorEntry } from './state';
+import type { ActivityState, MonitorEntry } from './state';
 import { readTailEvents, type NormalizedEvent } from './transcript';
 
 export function escapeHtml(s: string): string {
@@ -26,6 +26,13 @@ function fmtRelativeTime(iso: string | undefined): string {
   return `${day}d ago`;
 }
 
+const STATE_LABEL_JA: Record<ActivityState, string> = {
+  'ai-processing': 'AI処理中',
+  'waiting': '待機中',
+  'stopped': '停止',
+  'error': 'エラー',
+};
+
 const COMMON_STYLE = `
 * { box-sizing: border-box; }
 body {
@@ -43,10 +50,72 @@ h1 { font-size: 18px; margin: 0 0 12px; }
   border-radius: 10px;
   font-size: 11px;
   font-weight: 600;
+  white-space: nowrap;
 }
-.badge-active { background: #e6f4ea; color: #1e7e34; }
-.badge-recent { background: #fff4e5; color: #b86200; }
-.badge-idle   { background: #eceff1; color: #546e7a; }
+.badge-ai-processing { background: #e6f4ea; color: #1e7e34; }
+.badge-waiting       { background: #e3f2fd; color: #1565c0; }
+.badge-stopped       { background: #eceff1; color: #546e7a; }
+.badge-error         { background: #fdecea; color: #b71c1c; }
+
+.cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(360px, 1fr));
+  gap: 12px;
+}
+.card {
+  display: block;
+  background: #fff;
+  border: 1px solid #e5e5e5;
+  border-radius: 8px;
+  padding: 12px 14px;
+  text-decoration: none;
+  color: inherit;
+  transition: border-color 0.1s, box-shadow 0.1s;
+}
+.card:hover { border-color: #bbb; box-shadow: 0 2px 6px rgba(0,0,0,0.04); }
+.card-state-error { border-color: #f5c6cb; }
+.card-state-stopped { background: #fbfbfb; }
+.card-header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+.card-cwd {
+  font-weight: 600;
+  font-size: 13px;
+  word-break: break-all;
+  flex: 1 1 auto;
+  min-width: 0;
+}
+.card-meta { color: #666; font-size: 11px; white-space: nowrap; }
+.card-summary {
+  color: #555;
+  font-size: 12px;
+  margin-bottom: 8px;
+  min-height: 0;
+}
+.card-summary:empty { display: none; }
+.card-user, .card-assistant {
+  border-top: 1px solid #f0f0f0;
+  padding-top: 8px;
+  margin-top: 6px;
+}
+.card-line-head { font-size: 11px; color: #666; margin-bottom: 2px; }
+.card-line-body {
+  font-size: 12px;
+  color: #333;
+  white-space: pre-wrap;
+  word-break: break-word;
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  max-height: 4.5em;
+}
+.card-line-body.empty { color: #aaa; }
+
 table { width: 100%; border-collapse: collapse; font-size: 12px; background: #fff; }
 th, td { padding: 6px 10px; border-bottom: 1px solid #eee; text-align: left; vertical-align: top; }
 th { background: #f5f5f5; font-weight: 600; }
@@ -87,47 +156,66 @@ a { color: #1565c0; text-decoration: none; }
 a:hover { text-decoration: underline; }
 `;
 
-function badge(state: 'active' | 'recent' | 'idle'): string {
-  const label = state.charAt(0).toUpperCase() + state.slice(1);
-  return `<span class="badge badge-${state}">${label}</span>`;
+function badge(state: ActivityState): string {
+  return `<span class="badge badge-${state}">${STATE_LABEL_JA[state]}</span>`;
 }
 
-function summarizeLastEvent(events: NormalizedEvent[]): string {
-  if (events.length === 0) return '—';
-  const last = events[events.length - 1];
-  const trimmed = last.text.replace(/\s+/g, ' ').trim();
-  const preview = trimmed.length > 80 ? `${trimmed.slice(0, 80)}…` : trimmed;
-  const kindLabel = last.kind === 'tool-use' ? `[${last.toolName ?? 'tool'}]` : `[${last.kind}]`;
-  return `${kindLabel} ${preview}`;
+/** カード本文のプレビュー文字列を生成する。trim と末尾 … 付け。 */
+function previewText(s: string | undefined, maxChars = 240): string {
+  if (!s) return '';
+  const cleaned = s.trim();
+  if (cleaned.length <= maxChars) return cleaned;
+  return `${cleaned.slice(0, maxChars)}…`;
+}
+
+function renderCardBody(entry: MonitorEntry): string {
+  const tail = entry.tail;
+  const userPreview = previewText(tail?.lastUserText);
+  const assistantPreview = previewText(tail?.lastAssistantText);
+  const userBody = userPreview
+    ? `<div class="card-line-body">${escapeHtml(userPreview)}</div>`
+    : `<div class="card-line-body empty">(まだユーザー入力がありません)</div>`;
+  const assistantBody = assistantPreview
+    ? `<div class="card-line-body">${escapeHtml(assistantPreview)}</div>`
+    : `<div class="card-line-body empty">(まだ Claude の返信がありません)</div>`;
+  return `
+    <div class="card-summary"><!-- Phase 2/3 で AI 要約を挿入 --></div>
+    <div class="card-user">
+      <div class="card-line-head">👤 ユーザー (${escapeHtml(fmtRelativeTime(tail?.lastUserAt))})</div>
+      ${userBody}
+    </div>
+    <div class="card-assistant">
+      <div class="card-line-head">🤖 Claude (${escapeHtml(fmtRelativeTime(tail?.lastAssistantAt))})</div>
+      ${assistantBody}
+    </div>`;
+}
+
+function renderCard(entry: MonitorEntry): string {
+  const href = `#ai-monitor/proc:${escapeHtml(entry.id)}`;
+  const pid = entry.process?.pid;
+  const pidPart = pid !== undefined ? `PID ${escapeHtml(String(pid))} · ` : '';
+  const meta = `${pidPart}${escapeHtml(fmtRelativeTime(entry.lastActivityAt))}`;
+  return `<a class="card card-state-${entry.state}" href="${href}" target="_top">
+    <div class="card-header">
+      ${badge(entry.state)}
+      <span class="card-cwd">${escapeHtml(entry.cwd)}</span>
+      <span class="card-meta">${meta}</span>
+    </div>
+    ${renderCardBody(entry)}
+  </a>`;
 }
 
 export function renderDashboard(entries: MonitorEntry[]): string {
   const now = new Date().toISOString();
-  const rows = entries.map(e => {
-    const events = e.transcript ? readTailEvents(e.transcript.jsonlPath, 50) : [];
-    const last = summarizeLastEvent(events);
-    return `<tr>
-      <td><a href="#ai-monitor/proc:${escapeHtml(e.id)}" target="_top">${escapeHtml(e.cwd)}</a></td>
-      <td><code>${escapeHtml(String(e.process?.pid ?? '—'))}</code></td>
-      <td>${badge(e.state)}</td>
-      <td>${escapeHtml(fmtRelativeTime(e.lastActivityAt))}</td>
-      <td>${escapeHtml(last)}</td>
-    </tr>`;
-  }).join('\n');
   const body = entries.length === 0
     ? `<div class="empty">稼働中の Claude Code CLI が見つかりません。</div>`
-    : `<table>
-        <thead>
-          <tr><th>cwd</th><th>PID</th><th>state</th><th>最終活動</th><th>直近イベント</th></tr>
-        </thead>
-        <tbody>${rows}</tbody>
-      </table>`;
+    : `<div class="cards">${entries.map(renderCard).join('\n')}</div>`;
   return `<!doctype html>
 <html><head><meta charset="utf-8"><title>AI Monitor Dashboard</title>
 <style>${COMMON_STYLE}</style></head>
 <body>
   <h1>Dashboard</h1>
-  <div class="meta">稼働中 CLI: ${entries.length} 件 · 取得時刻: ${escapeHtml(now)}</div>
+  <div class="meta">表示中 CLI: ${entries.length} 件 · 取得時刻: ${escapeHtml(now)}</div>
   ${body}
 </body></html>`;
 }

@@ -1,7 +1,19 @@
 import { listClaudeProcesses, type ClaudeProcess } from './processes';
-import { listTranscripts, type TranscriptInfo } from './transcript';
+import {
+  listTranscripts,
+  readTailEvents,
+  summarizeTail,
+  type TailSummary,
+  type TranscriptInfo,
+} from './transcript';
 
-export type ActivityState = 'active' | 'recent' | 'idle';
+export type ActivityState = 'ai-processing' | 'waiting' | 'stopped' | 'error';
+
+/** プロセス消滅後もダッシュボードに残す保持時間 (秒)。これを超えた jsonl は表示から落とす。 */
+export const STOPPED_RETENTION_SEC = 600;
+
+/** ai-processing 判定で「最近 jsonl が動いた」とみなす閾値 (ms)。 */
+const AI_PROCESSING_FRESH_MS = 30_000;
 
 export interface MonitorEntry {
   /** 表示・URL 用 ID (cwd を base64url 化したもの) */
@@ -11,7 +23,9 @@ export interface MonitorEntry {
   transcript?: TranscriptInfo;
   /** 最後のターン時刻 (ISO 文字列)。jsonl が無い場合は undefined。 */
   lastActivityAt?: string;
-  /** activity 判定。プロセスが居なければ常に idle 扱い。 */
+  /** カード描画と state 判定に使うイベント要約。jsonl が無ければ undefined。 */
+  tail?: TailSummary;
+  /** activity 判定。プロセス生存有無と jsonl mtime / 末尾イベント種別から決まる。 */
   state: ActivityState;
 }
 
@@ -30,20 +44,34 @@ export function decodeId(id: string): string | null {
   }
 }
 
-function classify(lastActivityAt: string | undefined, hasProcess: boolean): ActivityState {
-  if (!lastActivityAt) return hasProcess ? 'idle' : 'idle';
-  const t = Date.parse(lastActivityAt);
-  if (!Number.isFinite(t)) return 'idle';
-  const diff = Date.now() - t;
-  if (diff <= 30_000) return 'active';
-  if (diff <= 5 * 60_000) return 'recent';
-  return 'idle';
+interface ClassifyInput {
+  hasProcess: boolean;
+  lastActivityAt?: string;
+  endsWithUnmatchedToolUse: boolean;
+}
+
+/**
+ * 新 4 状態 (ai-processing / waiting / stopped / error) の判定。
+ *
+ * - プロセス生存 → 直近 30 秒で jsonl が動いたなら ai-processing、それ以外は waiting
+ * - プロセス消滅 → 末尾が未一致 tool_use なら error、それ以外は stopped
+ *   (stopped はさらに STOPPED_RETENTION_SEC のフィルタを buildEntries 側で行う)
+ */
+export function classifyV2(opts: ClassifyInput): ActivityState {
+  if (opts.hasProcess) {
+    const t = opts.lastActivityAt ? Date.parse(opts.lastActivityAt) : NaN;
+    if (Number.isFinite(t) && Date.now() - t <= AI_PROCESSING_FRESH_MS) return 'ai-processing';
+    return 'waiting';
+  }
+  if (opts.endsWithUnmatchedToolUse) return 'error';
+  return 'stopped';
 }
 
 /**
  * 稼働中の claude プロセスと jsonl を突き合わせて、UI に出すエントリ一覧を作る。
- * - 「プロセスが居る cwd」を主軸にする (= 生きてる CLI のみ表示)
- * - 同じ cwd の jsonl が無いプロセスは jsonl 無しエントリとして出す
+ * - 「プロセスが居る cwd」を起点に列挙
+ * - プロセスが消えた transcript も `STOPPED_RETENTION_SEC` 以内なら停止 / エラーとして残す
+ * - 各 entry には末尾イベントの要約 (tail) を含める
  */
 export async function buildEntries(): Promise<MonitorEntry[]> {
   const [processes, transcripts] = await Promise.all([
@@ -60,10 +88,13 @@ export async function buildEntries(): Promise<MonitorEntry[]> {
 
   const entries: MonitorEntry[] = [];
   const seen = new Set<string>();
+
+  // 1) プロセス起点: 生きている CLI
   for (const proc of processes) {
     if (seen.has(proc.cwd)) continue;
     seen.add(proc.cwd);
     const ts = byCwd.get(proc.cwd);
+    const tail = ts ? summarizeTail(readTailEvents(ts.jsonlPath, 50)) : undefined;
     const lastActivityAt = ts ? new Date(ts.mtimeMs).toISOString() : undefined;
     entries.push({
       id: encodeId(proc.cwd),
@@ -71,7 +102,34 @@ export async function buildEntries(): Promise<MonitorEntry[]> {
       process: proc,
       transcript: ts,
       lastActivityAt,
-      state: classify(lastActivityAt, true),
+      tail,
+      state: classifyV2({
+        hasProcess: true,
+        lastActivityAt,
+        endsWithUnmatchedToolUse: tail?.endsWithUnmatchedToolUse ?? false,
+      }),
+    });
+  }
+
+  // 2) プロセスが居ない transcript: 保持期間内なら stopped / error として残す
+  const retentionCutoffMs = Date.now() - STOPPED_RETENTION_SEC * 1000;
+  for (const ts of byCwd.values()) {
+    if (seen.has(ts.cwd)) continue;
+    if (ts.mtimeMs < retentionCutoffMs) continue;
+    seen.add(ts.cwd);
+    const tail = summarizeTail(readTailEvents(ts.jsonlPath, 50));
+    const lastActivityAt = new Date(ts.mtimeMs).toISOString();
+    entries.push({
+      id: encodeId(ts.cwd),
+      cwd: ts.cwd,
+      transcript: ts,
+      lastActivityAt,
+      tail,
+      state: classifyV2({
+        hasProcess: false,
+        lastActivityAt,
+        endsWithUnmatchedToolUse: tail.endsWithUnmatchedToolUse,
+      }),
     });
   }
 

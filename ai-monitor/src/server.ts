@@ -1,5 +1,5 @@
 import express, { Request, Response } from 'express';
-import { buildEntries, decodeId, type MonitorEntry } from './state';
+import { buildEntries, decodeId, type ActivityState, type MonitorEntry } from './state';
 import { projectsDir } from './transcript';
 import { renderDashboard, renderNotFound, renderProcessView } from './views';
 
@@ -16,6 +16,20 @@ function noStore(res: Response): void {
   res.setHeader('Cache-Control', 'no-store');
 }
 
+const STATE_MARK: Record<ActivityState, string> = {
+  'ai-processing': '●',
+  'waiting': '◐',
+  'stopped': '○',
+  'error': '⚠',
+};
+
+const STATE_SUB_JA: Record<ActivityState, string> = {
+  'ai-processing': 'AI処理中',
+  'waiting': '待機中',
+  'stopped': '停止',
+  'error': 'エラー',
+};
+
 function buildSidebarItems(entries: MonitorEntry[]): Array<Record<string, string>> {
   const items: Array<Record<string, string>> = [
     {
@@ -26,13 +40,14 @@ function buildSidebarItems(entries: MonitorEntry[]): Array<Record<string, string
     },
   ];
   for (const e of entries) {
-    const dot = e.state === 'active' ? '●' : e.state === 'recent' ? '◐' : '○';
+    const pid = e.process?.pid;
+    const pidPart = pid !== undefined ? `PID ${pid}` : 'PID —';
     items.push({
       id: `proc:${e.id}`,
       label: e.cwd,
-      sub: `PID ${e.process?.pid ?? '—'} · ${e.state}`,
+      sub: `${pidPart} · ${STATE_SUB_JA[e.state]}`,
       group: 'processes',
-      badge: dot,
+      badge: STATE_MARK[e.state],
     });
   }
   return items;

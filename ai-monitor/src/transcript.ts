@@ -275,3 +275,67 @@ export function lastTimestamp(events: NormalizedEvent[]): string | null {
   }
   return null;
 }
+
+export interface TailSummary {
+  /** 末尾に近い user-text (meta は除外)。無ければ undefined。 */
+  lastUserText?: string;
+  lastUserAt?: string;
+  /** 末尾に近い assistant-text。無ければ undefined。 */
+  lastAssistantText?: string;
+  lastAssistantAt?: string;
+  /** 末尾イベントの kind。state 判定 / デバッグ用。 */
+  lastEventKind?: EventKind;
+  /** 末尾が tool_use で、対応する tool_result が tail 内に無いか。エラー判定用。 */
+  endsWithUnmatchedToolUse: boolean;
+}
+
+/**
+ * 時系列昇順のイベント配列から、カード表示と state 判定に必要な要約を取り出す。
+ *
+ * - 最後の user-text / assistant-text の本文と時刻
+ * - 末尾イベントの kind
+ * - 末尾が tool_use で、その toolUseId に対応する tool_result が tail に存在しないか
+ *   (= ターン途中で死んだ → 'error' 状態の判定材料)
+ */
+export function summarizeTail(events: NormalizedEvent[]): TailSummary {
+  let lastUserText: string | undefined;
+  let lastUserAt: string | undefined;
+  let lastAssistantText: string | undefined;
+  let lastAssistantAt: string | undefined;
+
+  for (const ev of events) {
+    if (ev.kind === 'user-text' && !ev.isMeta) {
+      lastUserText = ev.text;
+      lastUserAt = ev.timestamp;
+    } else if (ev.kind === 'assistant-text') {
+      lastAssistantText = ev.text;
+      lastAssistantAt = ev.timestamp;
+    }
+  }
+
+  let lastEventKind: EventKind | undefined;
+  let endsWithUnmatchedToolUse = false;
+  if (events.length > 0) {
+    const last = events[events.length - 1];
+    lastEventKind = last.kind;
+    if (last.kind === 'tool-use') {
+      const id = last.toolUseId;
+      // toolUseId が無い tool_use は照合不能なので「未一致」扱い (安全側)
+      if (!id) {
+        endsWithUnmatchedToolUse = true;
+      } else {
+        const matched = events.some(e => e.kind === 'tool-result' && e.toolUseId === id);
+        endsWithUnmatchedToolUse = !matched;
+      }
+    }
+  }
+
+  return {
+    lastUserText,
+    lastUserAt,
+    lastAssistantText,
+    lastAssistantAt,
+    lastEventKind,
+    endsWithUnmatchedToolUse,
+  };
+}
