@@ -17,6 +17,8 @@
     "dev": "ts-node src/cli.ts"
   },
   "dependencies": {
+    "@anthropic-ai/sdk": "^0.36.0",
+    "dotenv": "^16.4.5",
     "express": "^4.21.2"
   },
   "devDependencies": {

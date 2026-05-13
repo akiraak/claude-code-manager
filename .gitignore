@@ -4,3 +4,4 @@ ai-monitor/node_modules/
 ai-monitor/dist/
 node_modules/
 .claude/
+.env

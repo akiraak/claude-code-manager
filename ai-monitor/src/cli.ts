@@ -1,4 +1,10 @@
 #!/usr/bin/env node
+import path from 'path';
+import dotenv from 'dotenv';
+
+// repo root の .env を読む。__dirname は dist/ もしくは src/ なので 2 階層上がリポジトリ直下。
+dotenv.config({ path: path.resolve(__dirname, '../../.env') });
+
 import { startServer } from './server';
 
 interface Options {
@@ -53,6 +59,11 @@ function printHelp(): void {
 
 try {
   const opts = parseArgs(process.argv.slice(2));
+  if (process.env.ANTHROPIC_API_KEY) {
+    console.log('[ai-monitor] ANTHROPIC_API_KEY: 検出 (要約機能 有効)');
+  } else {
+    console.warn('[ai-monitor] ANTHROPIC_API_KEY: 未設定 (要約機能 無効)');
+  }
   startServer(opts);
 } catch (err) {
   const msg = err instanceof Error ? err.message : String(err);
