@@ -411,3 +411,114 @@ export function summarizeTail(events: NormalizedEvent[]): TailSummary {
     endsWithLocalCommand,
   };
 }
+
+export interface LastUserTextRef {
+  /** 表示用に整形済み (XML 包み剥がし / local-command-stdout 抽出済み) */
+  text: string;
+  /** jsonl の timestamp フィールド (ISO 文字列) */
+  at: string;
+}
+
+interface LastUserTextCacheEntry {
+  mtimeMs: number;
+  value: LastUserTextRef | null;
+}
+
+// (jsonlPath, mtimeMs) で結果をキャッシュする。jsonl は append-only なので
+// mtime 不変 = 直近 user-text も不変。サーバ再起動で揮発する前提。
+const lastUserTextCache = new Map<string, LastUserTextCacheEntry>();
+
+// 段階拡張で読むサイズ。最初の窓で当たれば I/O は 256KB で済む。
+// 16MB まで読んでも user-text が無ければ「本当に入力なし」とみなす。
+const FIND_USER_TEXT_SCAN_SIZES = [
+  256 * 1024,
+  1024 * 1024,
+  4 * 1024 * 1024,
+  16 * 1024 * 1024,
+];
+
+function parseUserTextFromLine(line: string): LastUserTextRef | null {
+  let obj: Record<string, unknown>;
+  try {
+    obj = JSON.parse(line) as Record<string, unknown>;
+  } catch {
+    return null;
+  }
+  if (obj.type !== 'user') return null;
+  if (obj.isMeta === true) return null;
+  const timestamp = typeof obj.timestamp === 'string' ? obj.timestamp : '';
+  if (!timestamp) return null;
+  const msg = obj.message as { content?: unknown } | undefined;
+  const content = msg?.content;
+  if (typeof content === 'string') {
+    return { text: formatUserMessageForDisplay(content), at: timestamp };
+  }
+  if (Array.isArray(content)) {
+    // 1 行に複数 part がある場合は readTailEvents/summarizeTail と挙動を合わせ、
+    // 末尾の text part を採用する (tool_result は無視 = Yes/No 承認は捨てる)。
+    for (let i = content.length - 1; i >= 0; i--) {
+      const item = content[i];
+      if (!item || typeof item !== 'object') continue;
+      const it = item as { type?: string; text?: string };
+      if (it.type === 'text' && typeof it.text === 'string') {
+        return { text: formatUserMessageForDisplay(it.text), at: timestamp };
+      }
+    }
+  }
+  return null;
+}
+
+/**
+ * jsonl 末尾から逆順に走査し、直近の user-text (= ユーザーが打った発言) を 1 件返す。
+ * Yes/No 承認 (= tool_result) や isMeta は飛ばす。見つからなければ null。
+ *
+ * `readTailEvents(50)` の窓を超えて user-text を遡及できるよう、256KB → 16MB と
+ * 段階的に窓を拡げる。結果は (jsonlPath, mtimeMs) でメモする。
+ *
+ * 用途: state 判定 ({@link summarizeTail}) は触らず、ダッシュボード表示用に
+ *   `lastUserText` が undefined だったときのフォールバックとして使う。
+ */
+export function findLastUserText(jsonlPath: string, mtimeMs: number): LastUserTextRef | null {
+  const cached = lastUserTextCache.get(jsonlPath);
+  if (cached && cached.mtimeMs === mtimeMs) return cached.value;
+
+  let fileSize: number;
+  try {
+    fileSize = fs.statSync(jsonlPath).size;
+  } catch {
+    return null;
+  }
+  if (fileSize === 0) {
+    lastUserTextCache.set(jsonlPath, { mtimeMs, value: null });
+    return null;
+  }
+
+  for (const size of FIND_USER_TEXT_SCAN_SIZES) {
+    let raw: string;
+    try {
+      raw = readTailBytes(jsonlPath, size);
+    } catch {
+      return null;
+    }
+    const lines = raw.split('\n');
+    // tail バッファの先頭 1 行はオフセット途中切れの可能性があるので捨てる。
+    // ただし窓がファイル全体を含むなら先頭から有効なので捨てない。
+    const readingWholeFile = size >= fileSize;
+    if (!readingWholeFile && lines.length > 1) lines.shift();
+
+    for (let i = lines.length - 1; i >= 0; i--) {
+      const line = lines[i];
+      if (!line) continue;
+      const parsed = parseUserTextFromLine(line);
+      if (parsed) {
+        lastUserTextCache.set(jsonlPath, { mtimeMs, value: parsed });
+        return parsed;
+      }
+    }
+
+    if (readingWholeFile) break; // 全体を読み終えたので拡張不要
+  }
+
+  lastUserTextCache.set(jsonlPath, { mtimeMs, value: null });
+  return null;
+}

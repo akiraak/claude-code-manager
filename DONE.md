@@ -1,5 +1,10 @@
 # DONE
 
+- 2026-05-13: ダッシュボードカードに「直近のユーザー入力」を遡って表示する ([plan](docs/plans/archive/dashboard-recall-last-user-input.md))
+    - 旧実装は `readTailEvents(50)` の窓内だけ走査していたため、ツールが 25 回以上連打されると user-text が tail から押し出され、カードに `(まだユーザー入力がありません)` が出ていた
+    - `transcript.ts` に `findLastUserText(jsonlPath, mtimeMs)` を追加。`(jsonlPath, mtimeMs)` をキーにメモした上で 256KB → 1MB → 4MB → 16MB と窓を段階拡張し、末尾から逆順に走査して直近の `type: 'user'` (isMeta / tool_result は除外) を返す。表示整形は既存 `formatUserMessageForDisplay` を流用
+    - `state.ts` の `buildEntries` で、プロセス生存ループ・停止ループの両方で `summarizeTail` の `lastUserText` が空のときだけフォールバックとして呼ぶ。`classifyV2` (state 判定) には触らない
+    - 単体テスト 6 ケースを `ai-monitor/src/transcript.test.ts` に追加 (長尺 jsonl 遡及 / user-text なし / `/clear` 整形 / mtime キャッシュ / tool_result-only 行スキップ / isMeta スキップ)
 - 2026-05-13: ダッシュボード更新時に画面がちらつくのを修正 ([plan](docs/plans/archive/dashboard-flicker-fix.md))
     - 旧実装は親 vibeboard が SSE `item-changed` を受けるたびに iframe.src を差し替えていたため、白フラッシュ + バッジ脈動アニメの先頭リセット + スクロール位置リセットが起きていた
     - Phase 1: `/api/dashboard.json` を新設。`entryToDashboardCardData` で `renderDashboard` と JSON API のカード整形ロジックを純関数化して共有 (時刻フォーマット / preview 切り詰めをサーバ側に閉じ込め、クライアントに重複ロジックを置かない)

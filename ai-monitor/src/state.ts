@@ -3,6 +3,7 @@ import { listClaudeProcesses, type ClaudeProcess } from './processes';
 import type { Summarizer, SummaryResult } from './summarize';
 import {
   cwdToProjectDir,
+  findLastUserText,
   listTranscripts,
   readTailEvents,
   summarizeTail,
@@ -159,7 +160,15 @@ export async function buildEntries(opts: BuildEntriesOptions = {}): Promise<Moni
     seen.add(projectDir);
     const ts = byProjectDir.get(projectDir);
     const events = ts ? readTailEvents(ts.jsonlPath, 50) : [];
-    const tail = ts ? summarizeTail(events) : undefined;
+    let tail = ts ? summarizeTail(events) : undefined;
+    // tail 窓 (50 件) に user-text が無いケース (ツール連打で押し出された等) は
+    // jsonl 全体を遡って直近のユーザー入力を取り戻す。state 判定は触らない。
+    if (ts && tail && !tail.lastUserText) {
+      const recalled = findLastUserText(ts.jsonlPath, ts.mtimeMs);
+      if (recalled) {
+        tail = { ...tail, lastUserText: recalled.text, lastUserAt: recalled.at };
+      }
+    }
     const lastActivityAt = ts ? new Date(ts.mtimeMs).toISOString() : undefined;
     const summary = ts && summarizer
       ? readSummaryStatus(summarizer, ts.jsonlPath, ts.mtimeMs)
@@ -191,7 +200,14 @@ export async function buildEntries(opts: BuildEntriesOptions = {}): Promise<Moni
     if (ts.mtimeMs < retentionCutoffMs) continue;
     seen.add(ts.projectDir);
     const events = readTailEvents(ts.jsonlPath, 50);
-    const tail = summarizeTail(events);
+    let tail = summarizeTail(events);
+    // 停止カードでも同じく直近 user-text を遡及する (24h は表示が残るため)。
+    if (!tail.lastUserText) {
+      const recalled = findLastUserText(ts.jsonlPath, ts.mtimeMs);
+      if (recalled) {
+        tail = { ...tail, lastUserText: recalled.text, lastUserAt: recalled.at };
+      }
+    }
     const lastActivityAt = new Date(ts.mtimeMs).toISOString();
     const summary = summarizer
       ? readSummaryStatus(summarizer, ts.jsonlPath, ts.mtimeMs)
