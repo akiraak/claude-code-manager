@@ -1,5 +1,10 @@
 # DONE
 
+- 2026-05-13: 権限プロンプト (Bash/Edit/Write 等の Yes/No) 表示中も「入力待ち」として検知 ([plan](docs/plans/archive/awaiting-input-via-hook.md))
+    - Phase 1: グローバル hook `~/.claude/hooks/ccm-awaiting-marker.py` を追加。`PermissionRequest` で `/tmp/claude-code-manager/awaiting-input/<session_id>.json` を作り、`PostToolUse` / `Stop` で消す。`~/.claude/settings.json` に並列登録 (既存の `notify-permission.py` には触らず)
+    - Phase 2: `ai-monitor/src/awaiting-input.ts` を追加し、`classifyV2` に `hasAwaitingMarker` を組み込み (mtime 1h で stale 掃除付き)
+    - Phase 3: marker ディレクトリを `fs.watch` で監視。SSE tick の per-entry key を `"<mtime>|<state>"` 化し、marker 切り替えで dashboard + 該当 entry の `item-changed` を push
+    - Phase 4: CLAUDE.md / README のバッジ表に PermissionRequest hook 由来の入力待ちを追記
 - 2026-05-13: `/clear` などスラッシュコマンドの XML 包みを表示時に剥がす ([plan](docs/plans/archive/strip-command-xml-from-user-text.md))
     - `ai-monitor/src/transcript.ts` に `formatUserMessageForDisplay` を追加し、`<command-name>...</command-name>` + `<command-args>...</command-args>` を `/clear` / `/foo bar` 形式に整形
     - `<local-command-stdout>...</local-command-stdout>` (`! ...` シェル実行結果) は中身のみ抽出。空なら `(出力なし)` プレースホルダ

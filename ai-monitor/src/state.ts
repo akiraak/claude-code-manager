@@ -1,3 +1,4 @@
+import { listAwaitingInputMarkers } from './awaiting-input';
 import { listClaudeProcesses, type ClaudeProcess } from './processes';
 import type { Summarizer, SummaryResult } from './summarize';
 import {
@@ -82,6 +83,11 @@ interface ClassifyInput {
   lastActivityAt?: string;
   /** 末尾がユーザー応答待ちツール (AskUserQuestion / ExitPlanMode) の tool_use か */
   endsWithInteractiveToolUse: boolean;
+  /**
+   * PermissionRequest hook が置いた marker が現存するか
+   * (Bash/Edit/Write 等の Yes/No 権限プロンプト表示中)。
+   */
+  hasAwaitingMarker: boolean;
 }
 
 /**
@@ -89,6 +95,7 @@ interface ClassifyInput {
  *
  * - プロセス生存:
  *   - 末尾が対話ツール (`AskUserQuestion` / `ExitPlanMode`) で未一致 → awaiting-user
+ *   - PermissionRequest hook の marker あり (権限プロンプト保留中) → awaiting-user
  *   - jsonl が直近 30 秒以内に更新 → ai-processing
  *   - それ以外 → waiting
  * - プロセス消滅: stopped (STOPPED_RETENTION_SEC で表示から落とすのは buildEntries 側)
@@ -98,7 +105,7 @@ interface ClassifyInput {
  */
 export function classifyV2(opts: ClassifyInput): ActivityState {
   if (!opts.hasProcess) return 'stopped';
-  if (opts.endsWithInteractiveToolUse) return 'awaiting-user';
+  if (opts.endsWithInteractiveToolUse || opts.hasAwaitingMarker) return 'awaiting-user';
   const t = opts.lastActivityAt ? Date.parse(opts.lastActivityAt) : NaN;
   if (Number.isFinite(t) && Date.now() - t <= AI_PROCESSING_FRESH_MS) return 'ai-processing';
   return 'waiting';
@@ -130,6 +137,10 @@ export async function buildEntries(opts: BuildEntriesOptions = {}): Promise<Moni
     if (!cur || t.mtimeMs > cur.mtimeMs) byProjectDir.set(t.projectDir, t);
   }
 
+  // 権限プロンプト保留中の marker (sessionId キー) を 1 度だけロード。
+  // 各 entry の transcript.sessionId と突き合わせて awaiting-user 判定に使う。
+  const markers = listAwaitingInputMarkers();
+
   const summarizer = opts.summarizer;
   const entries: MonitorEntry[] = [];
   const seen = new Set<string>();
@@ -146,6 +157,7 @@ export async function buildEntries(opts: BuildEntriesOptions = {}): Promise<Moni
     const summary = ts && summarizer
       ? readSummaryStatus(summarizer, ts.jsonlPath, ts.mtimeMs)
       : undefined;
+    const hasAwaitingMarker = ts ? markers.has(ts.sessionId) : false;
     entries.push({
       id: encodeId(projectDir),
       projectDir,
@@ -158,6 +170,7 @@ export async function buildEntries(opts: BuildEntriesOptions = {}): Promise<Moni
         hasProcess: true,
         lastActivityAt,
         endsWithInteractiveToolUse: tail?.endsWithInteractiveToolUse ?? false,
+        hasAwaitingMarker,
       }),
       summary,
     });
@@ -186,6 +199,7 @@ export async function buildEntries(opts: BuildEntriesOptions = {}): Promise<Moni
         hasProcess: false,
         lastActivityAt,
         endsWithInteractiveToolUse: tail.endsWithInteractiveToolUse,
+        hasAwaitingMarker: false,
       }),
       summary,
     });

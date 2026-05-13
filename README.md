@@ -52,12 +52,14 @@ AI Monitor のポートを変える場合は `AI_MONITOR_PORT=<N> ./run-ai-monit
 | バッジ | 色 | 装飾 | 条件 |
 |---|---|---|---|
 | **AI処理中** | 緑 | 脈動 | CLI 生存 + 直近 30 秒以内に jsonl 更新あり |
-| **入力待ち** | オレンジ | 脈動 | CLI 生存 + 末尾が `AskUserQuestion` / `ExitPlanMode` の未一致 `tool_use` (Yes/No 選択待ち) |
+| **入力待ち** | オレンジ | 脈動 | CLI 生存 + (末尾が `AskUserQuestion` / `ExitPlanMode` の未一致 `tool_use`) **または** (Bash/Edit/Write 等の権限プロンプト保留中 = PermissionRequest hook marker あり) |
 | **待機中** | 黄 | 静止 | CLI 生存 + 上記以外 (アイドル / 通常のターン終了) |
 | **停止** | 灰 | 静止 | CLI 消滅。プロセス終了後 10 分だけ表示に残る (`STOPPED_RETENTION_SEC=600`) |
 
 緑 / オレンジ の脈動 = AI 側 / ユーザー側 のどちらかに「今すぐ動く必要がある」アクション。
-入力待ち (オレンジ) は AskUserQuestion 等の明示的ブロッカーのみ。通常の AI ターン終了は 待機中 で出るので、複数 CLI を並行運転していても 入力待ち が乱発しない。
+入力待ち (オレンジ) は AskUserQuestion / ExitPlanMode の明示的ブロッカーに加え、Bash / Edit / Write 等の Yes/No 権限プロンプトも検出する。通常の AI ターン終了は 待機中 で出るので、複数 CLI を並行運転していても 入力待ち が乱発しない。
+
+権限プロンプトの検出はグローバル hook (`~/.claude/hooks/ccm-awaiting-marker.py`) 経由で行う。`PermissionRequest` で `/tmp/claude-code-manager/awaiting-input/<session_id>.json` を置き、`PostToolUse` / `Stop` で消す。AI Monitor はそれを読み取り、`fs.watch` で変化を即座に SSE へ反映する。
 
 突き合わせキーは `~/.claude/projects/<projectDir>/` の `projectDir`。CLI 起動後にユーザーが `cd` してもセッションは 1 枚のカードにまとまる。
 

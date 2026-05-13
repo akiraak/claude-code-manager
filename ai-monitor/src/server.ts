@@ -1,5 +1,6 @@
 import path from 'path';
 import express, { Request, Response } from 'express';
+import { ensureAwaitingInputDir, watchAwaitingInputMarkers } from './awaiting-input';
 import { buildEntries, decodeId, type ActivityState, type MonitorEntry } from './state';
 import { Summarizer } from './summarize';
 import { projectsDir, readTailEvents } from './transcript';
@@ -64,6 +65,10 @@ function snapshotFingerprint(entries: MonitorEntry[]): string {
 
 export function startServer(opts: ServerOptions): void {
   const app = express();
+
+  // PermissionRequest hook の marker 置き場を起動時に確保しておく
+  // (`fs.watch` は存在しないディレクトリを監視できないため)
+  ensureAwaitingInputDir();
 
   // 要約が完了したタイミングで購読中の SSE クライアントに通知するためのリスナ集合
   const summaryListeners = new Set<() => void>();
@@ -174,7 +179,9 @@ export function startServer(opts: ServerOptions): void {
 
     let alive = true;
     let lastFingerprint = '';
-    let lastItemKey = new Map<string, number>(); // id → mtimeMs
+    // id → "<mtimeMs>|<state>" — state も入れることで marker のみで切り替わる
+    // (jsonl mtime は不変な) awaiting-user ↔ waiting の遷移も検出する
+    let lastItemKey = new Map<string, string>();
 
     const tick = async (): Promise<void> => {
       if (!alive) return;
@@ -192,17 +199,20 @@ export function startServer(opts: ServerOptions): void {
           }
           lastFingerprint = fp;
         }
-        // jsonl mtime 変化検出 → item-changed
+        // jsonl mtime / state 変化検出 → item-changed
+        // state を key に含めることで PermissionRequest marker による遷移
+        // (jsonl mtime は変わらない) も拾える
         for (const e of entries) {
           const mt = e.transcript?.mtimeMs ?? 0;
           const id = `proc:${e.id}`;
+          const key = `${mt}|${e.state}`;
           const prev = lastItemKey.get(id);
-          if (prev !== undefined && prev !== mt) {
+          if (prev !== undefined && prev !== key) {
             res.write(`event: item-changed\ndata: ${JSON.stringify({ id })}\n\n`);
-            // dashboard も「直近イベント」列が変わるので一緒に通知
+            // dashboard も「直近イベント」「状態バッジ」が変わるので一緒に通知
             res.write(`event: item-changed\ndata: ${JSON.stringify({ id: 'dashboard' })}\n\n`);
           }
-          lastItemKey.set(id, mt);
+          lastItemKey.set(id, key);
         }
         // 居なくなった ID は掃除
         const activeIds = new Set(entries.map(e => `proc:${e.id}`));
@@ -223,6 +233,18 @@ export function startServer(opts: ServerOptions): void {
     };
     summaryListeners.add(onSummaryUpdate);
 
+    // PermissionRequest hook の marker ディレクトリ変化で即時 tick を回す
+    // (ポーリングだけだと最大 2 秒のラグが出る)。watch が張れない FS でも
+    // ポーリングで拾えるので失敗は問題なし。
+    // tick が走行中なら次の tick はリエントラントに走らないよう簡易ガード。
+    let tickInflight = false;
+    const triggerTick = (): void => {
+      if (!alive || tickInflight) return;
+      tickInflight = true;
+      void tick().finally(() => { tickInflight = false; });
+    };
+    const stopMarkerWatch = watchAwaitingInputMarkers(triggerTick);
+
     // 初回呼び出しで現在状態をベースラインに乗せる (即時 sidebar push)
     await tick();
     // 2 秒間隔のポーリング
@@ -238,6 +260,7 @@ export function startServer(opts: ServerOptions): void {
       clearInterval(pollInterval);
       clearInterval(pingInterval);
       summaryListeners.delete(onSummaryUpdate);
+      stopMarkerWatch();
     });
   });
 
