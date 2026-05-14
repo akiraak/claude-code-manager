@@ -44,4 +44,17 @@ ubuntu@Sx360:~/claude-code-manager$ ./run-ai-monitor.sh
 ubuntu@Sx360:~/claude-code-manager$
 
 
-- [ ] プロセスの表示はtool_useとtool_resultがほとんどなので、それはグループ化する。ユーザー入力と最終的な出力が見やすくなるようにする
+- [ ] プロセスの表示はtool_useとtool_resultがほとんどなのでそれはグループ化する。
+      ユーザー入力と最終的な出力が見やすくなるようになるようなデザインや機能を入れる [plan](docs/plans/process-view-tool-grouping.md)
+  - [ ] Phase 1-A: `ai-monitor/src/turns.ts` 新規 + `Turn` 型 + `groupEventsIntoTurns(events)` 実装
+  - [ ] Phase 1-B: `turns.test.ts` で境界 / 孤児ターン / `finalAssistant` 抽出 / meta-user / system イベントの所属を確認
+  - [ ] Phase 2-A: `views.ts` CSS に `.turn` 系セクションを追加 (ユーザー / ツール / 中間 / 最終)
+  - [ ] Phase 2-B: `renderTurn(turn, index): { key, html }` 実装 (tool 内訳サマリ含む)
+  - [ ] Phase 2-C: `buildProcessViewData` を `events → turns` に変更 (戻り値型も変更)
+  - [ ] Phase 2-D: `renderProcessView` を `data-events → data-turns` に改名し turns を吐く
+  - [ ] Phase 3-A: `PROCESS_VIEW_LIVE_SCRIPT` の selector / コンテナ / payload キーを turn 用に書き換え
+  - [ ] Phase 3-B: `<details>` の open 状態保持 (`data-detail-id` ベースで集めて復元)
+  - [ ] Phase 3-C: 末尾スクロール追従 / 完了ターン非更新 が壊れないことを手動確認
+  - [ ] Phase 4-A: `views.test.ts` で `data-turn-key` / `data-turns` / 各セクションの出し分けを確認
+  - [ ] Phase 4-B: 既存スナップショット系テストの `data-event-key` 参照を `data-turn-key` に更新
+  - [ ] Phase 5: 手動確認 (プランの「対応方針 Phase 6」手順 1〜8)
