@@ -1,21 +1,5 @@
 # TODO
 
-- [ ] README.md にアプリの説明と使い方を入れて更新 [plan](docs/plans/readme-update.md)
-  - [ ] Phase 1-A: `STOPPED_RETENTION_SEC` 10 分 → 24 時間 / 86400 秒 修正
-  - [ ] Phase 1-B: 要約「1〜2 行」→「4〜6 行 / 400〜600 文字」修正
-  - [ ] Phase 1-C: AI処理中 バッジ条件に「ローカルコマンド直後を除く」追記
-  - [ ] Phase 1-D: 要約モデル / max_tokens 等の数値を実装と同期
-  - [ ] Phase 2-A: 冒頭概要を 2〜3 段落に拡張 (なぜ作ったか / 何が見られるか / 対象)
-  - [ ] Phase 2-B: 「動作環境 / 前提」セクション新設
-  - [ ] Phase 3-A: vibeboard 各タブ (TODO / Plans / Specs / AI Monitor) の使い方
-  - [ ] Phase 3-B: AI Monitor ダッシュボード読み方 (2 セクション / カード構成 / 要約 UI)
-  - [ ] Phase 3-C: AI Monitor プロセス詳細ビュー読み方
-  - [ ] Phase 4-A: 「開発」セクション (テスト / ビルド / 作業着手ルール参照)
-  - [ ] Phase 4-B: 「トラブルシューティング」セクション (ポート / hook / 要約 / 停止 24h)
-  - [ ] Phase 5-A: 内部リンクの生存確認
-  - [ ] Phase 5-B: 見出しレベル / 文体最終チェック
-  - [ ] Phase 5-C: 全体読み直し
-
 ## ダッシュボード
 - [ ] 要約が直近すぎるのでいくつか前のものも含める。とくに直前のユーザー入力の内容は入れる [plan](docs/plans/summary-context-and-collapsible.md)
   - [x] Phase 1-A: `server.ts` の要約用 `readTailEvents` を 50 → 150 に増やす

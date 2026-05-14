@@ -1,5 +1,14 @@
 # DONE
 
+- 2026-05-13: README.md にアプリの説明と使い方を入れて更新 ([plan](docs/plans/archive/readme-update.md))
+    - 古い数値・条件を実装と一致させた: `STOPPED_RETENTION_SEC` 10 分 → 24 時間 (`86_400`)、要約「1〜2 行」→「4〜6 行 / 400〜600 文字」、AI処理中 バッジ条件に「`/clear` `/help` `! ls` 等のローカルコマンド直後は除く」を追記、要約モデル / `RESPONSE_MAX_TOKENS=1000` / `PROMPT_MAX_CHARS=6000` / `PINNED_USER_MAX_CHARS=1200` を実装ファイル準拠で記載
+    - 冒頭の概要を 2〜3 段落に拡張 (なぜ作ったか / 何が見られるか / 対象ユーザーを明示)
+    - 「動作環境」セクションを新設 (Node >=18 / Claude Code CLI / `~/.claude/projects/` 前提 / `.env` 任意 / Linux + macOS / WSL2 動作確認 / Windows ネイティブ未検証)
+    - 「使い方」セクションを新設し、vibeboard 各タブ (TODO / Plans / Specs / AI Monitor) の役割を表で、AI Monitor ダッシュボード (起動中 / 停止 2 セクション、カード構成、要約 UI 操作: 要約 / 展開 / 再要約 / stale 表示)、プロセス詳細ビュー (jsonl 末尾 200 件 / SSE 自己更新 / 末尾追従) を記述。ターングルーピングは別 TODO へリンク
+    - 「権限プロンプト検出のための hook」セクションを新設 (`~/.claude/hooks/ccm-awaiting-marker.py` の役割と、未配置時に Bash/Edit/Write の権限プロンプトが「待機中」のままになる挙動を明記)
+    - 「開発」セクション (`(cd ai-monitor && npm test)` / `(cd vibeboard && npm test)` / `npm run build` / `tsconfig.strict` / 作業着手ルールは CLAUDE.md 参照) を新設
+    - 「トラブルシューティング」セクション (ポート競合 / hook 未配置 / 要約未表示 / 停止 24h 保持はバグではない) を新設
+    - 内部リンク (`CLAUDE.md` / `docs/plans/archive/ai-monitor.md` / `docs/specs/vibeboard-custom-tabs.md` / `docs/plans/process-view-tool-grouping.md`) の生存を確認
 - 2026-05-13: 要約済みカードでも「再要約」ボタンを出せるようにする（古い要約をその場で更新できる）([plan](docs/plans/archive/summary-resummarize-button.md))
     - 旧実装は `Summarizer.getOrCompute` が `jsonlPath` キャッシュ一致で無条件に旧結果を返し、UI も `idle` 状態でしか「要約」ボタンを出していなかったため、ファイルが動かない限り「古い要約」を貼り替える手段がなかった
     - `Summarizer.getOrCompute` / `wait` に `opts: { force?: boolean }` を追加。`force` 時はキャッシュチェックをスキップして `startCompute` を起動 (inflight があれば共有)
