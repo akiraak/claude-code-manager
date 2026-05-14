@@ -171,7 +171,13 @@ h1 { font-size: 18px; margin: 0 0 12px; }
   display: block;
   overflow: visible;
 }
-.card-summary-toggle {
+.card-summary-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+}
+.card-summary-toggle,
+.summarize-btn-link {
   display: inline-block;
   padding: 0;
   margin: 0;
@@ -182,7 +188,8 @@ h1 { font-size: 18px; margin: 0 0 12px; }
   border: none;
   cursor: pointer;
 }
-.card-summary-toggle:hover { text-decoration: underline; }
+.card-summary-toggle:hover,
+.summarize-btn-link:hover { text-decoration: underline; }
 .card-summary-toggle[hidden] { display: none; }
 .summarize-btn {
   display: inline-block;
@@ -401,7 +408,10 @@ function renderSummaryFromData(data: DashboardCardData): string {
       + `<span class="card-summary-icon">📝</span>`
       + `<div class="card-summary-content">`
       + `<span class="card-summary-text">${label}${escapeHtml(summary.text)}</span>`
+      + `<div class="card-summary-actions">`
       + `<button type="button" class="card-summary-toggle" data-summary-toggle hidden>展開</button>`
+      + `<button type="button" class="summarize-btn-link" data-item-id="${escapeHtml(data.itemId)}" data-force="1">再要約</button>`
+      + `</div>`
       + `</div>`
       + `</div>`;
   }
@@ -513,18 +523,24 @@ const DASHBOARD_SCRIPT = `
       return;
     }
 
-    // 要約ボタン
-    if (!t.classList || !t.classList.contains('summarize-btn')) return;
+    // 要約ボタン (idle 状態の大ボタン .summarize-btn / OK 状態のインライン .summarize-btn-link)
+    // - data-force="1" が付いていれば force=1 を付ける (キャッシュ無視で再要約)
+    // - ボタンの親 .card-summary 全体を「要約中…」表示に差し替える
+    //   (OK ブランチではボタンが card-summary-content の中なので、wrap は card-summary を辿る)
+    var btn = t.closest ? t.closest('.summarize-btn, .summarize-btn-link') : null;
+    if (!btn) return;
     ev.preventDefault();
     ev.stopPropagation();
-    var id = t.getAttribute('data-item-id');
+    var id = btn.getAttribute('data-item-id');
     if (!id) return;
-    var wrap = t.parentNode;
+    var force = btn.getAttribute('data-force') === '1';
+    var wrap = btn.closest('.card-summary');
     if (wrap) {
       wrap.className = 'card-summary card-summary-pending';
       wrap.innerHTML = '<span class="spinner"></span><span class="card-summary-text">要約中…</span>';
     }
-    fetch('/api/summarize?id=' + encodeURIComponent(id), { method: 'POST' })
+    var url = '/api/summarize?id=' + encodeURIComponent(id) + (force ? '&force=1' : '');
+    fetch(url, { method: 'POST' })
       .catch(function(err) {
         if (wrap) {
           wrap.className = 'card-summary card-summary-muted';
@@ -610,7 +626,10 @@ const DASHBOARD_LIVE_SCRIPT = `
         + '<span class="card-summary-icon">📝</span>'
         + '<div class="card-summary-content">'
         + '<span class="card-summary-text">' + label + esc(s.text) + '</span>'
+        + '<div class="card-summary-actions">'
         + '<button type="button" class="card-summary-toggle" data-summary-toggle hidden>展開</button>'
+        + '<button type="button" class="summarize-btn-link" data-item-id="' + esc(data.itemId) + '" data-force="1">再要約</button>'
+        + '</div>'
         + '</div>'
         + '</div>';
     }

@@ -1,5 +1,19 @@
 # DONE
 
+- 2026-05-13: 要約済みカードでも「再要約」ボタンを出せるようにする（古い要約をその場で更新できる）([plan](docs/plans/archive/summary-resummarize-button.md))
+    - 旧実装は `Summarizer.getOrCompute` が `jsonlPath` キャッシュ一致で無条件に旧結果を返し、UI も `idle` 状態でしか「要約」ボタンを出していなかったため、ファイルが動かない限り「古い要約」を貼り替える手段がなかった
+    - `Summarizer.getOrCompute` / `wait` に `opts: { force?: boolean }` を追加。`force` 時はキャッシュチェックをスキップして `startCompute` を起動 (inflight があれば共有)
+    - `/api/summarize` で `?force=1` を解釈して `getOrCompute` に伝搬
+    - `views.ts`: CSS に `.card-summary-actions` (横並び) と `.summarize-btn-link` (テキストリンク調) を追加。`renderSummaryFromData` の OK ブランチで「展開」と並べて `<button class="summarize-btn-link" data-force="1">再要約</button>` を出す。`DASHBOARD_LIVE_SCRIPT.renderSummary` も同構造に揃え、SSE 再描画後もボタンが残る
+    - クリックハンドラを `.summarize-btn` / `.summarize-btn-link` の両対応化。`data-force="1"` 時に `?force=1` を URL に付け、`.card-summary` 全体を「要約中…」UI に差し替える (OK ブランチではボタンが `.card-summary-content` 内なので `.closest('.card-summary')` で辿る)
+    - `views.test.ts` に OK ブランチの 再要約ボタン HTML 検証を 1 assert で追加。計 28 / 28 通過
+- 2026-05-13: AI 要約の長さを伸ばす（プロンプトの 200 字指示を 400〜600 字に緩和）([plan](docs/plans/archive/summary-length-up.md))
+    - 旧実装は `SYSTEM_PROMPT` と user prompt に「2〜3 行 / 合計 200 文字程度」と明示し、`RESPONSE_MAX_TOKENS = 360` だったため、Haiku が素直に従って 140〜192 字に頭打ちしていた (4 セッション実測)
+    - `SYSTEM_PROMPT` を「4〜6 行 / 合計 400〜600 文字程度」に、user prompt 第 2 文を「4〜6 行で要約してください」に変更
+    - `RESPONSE_MAX_TOKENS` を 360 → 1000 に引き上げ (600 字を確実に書き切れる余裕)
+    - 入力側 (tool-use/tool-result 除外 / 1 行 400 字トリム / 6000 字上限) は触らず。プロンプト全体は 1800 字程度しか使われておらず材料側はボトルネックではない
+    - 同じ 3 セッションで再計測: 186→333字 / 167→311字 / 192→402字 と狙いのレンジに乗った
+    - 既存 `summarize.test.ts` (5 ケース) は文字数指示の文言をアサートしておらず無修正で 28 / 28 通過
 - 2026-05-13: 要約キャッシュキーを `jsonlPath` 単位に変更（jsonl 更新時も表示が消えなくなる）([plan](docs/plans/archive/summary-cache-by-jsonl.md))
     - 旧実装は `Summarizer` の cache を `${jsonlPath}@${mtimeMs}` 複合キーで持っていたため、Claude Code CLI が 1 行追記するたび peek が miss し、ダッシュボード上の要約テキストが消えて「要約」ボタンに戻っていた
     - cache を `Map<jsonlPath, { result, mtimeMs }>` に変更。`peek(jsonlPath)` は mtime に関係なく最後の結果を返し、`isInflight(jsonlPath)` も jsonl 単位に。`getOrCompute(jsonlPath, mtimeMs, input)` は `cached.mtimeMs === mtimeMs` のときだけキャッシュ据え置き、ずれていれば再計算開始

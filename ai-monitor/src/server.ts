@@ -217,10 +217,14 @@ export function startServer(opts: ServerOptions): void {
       // 150 だとツール往復の多いセッションで user/assistant の往復が数件しか拾えなくなるから。
       const events = readTailEvents(entry.transcript.jsonlPath, 300);
       const recalled = findLastUserText(entry.transcript.jsonlPath, entry.transcript.mtimeMs);
-      const result = summarizer.getOrCompute(entry.transcript.jsonlPath, entry.transcript.mtimeMs, {
-        events,
-        recentUserText: recalled ?? undefined,
-      });
+      // ?force=1 → キャッシュを無視して必ず再計算 (UI「再要約」ボタンで使う)
+      const force = String(req.query.force ?? '') === '1';
+      const result = summarizer.getOrCompute(
+        entry.transcript.jsonlPath,
+        entry.transcript.mtimeMs,
+        { events, recentUserText: recalled ?? undefined },
+        { force },
+      );
       res.json(result);
     } catch (err) {
       console.warn('[ai-monitor] /api/summarize 失敗', err);

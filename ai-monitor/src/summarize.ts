@@ -49,13 +49,13 @@ export interface SummarizeInput {
 const DEFAULT_MODEL = 'claude-haiku-4-5-20251001';
 const PROMPT_MAX_CHARS = 6000;
 const PINNED_USER_MAX_CHARS = 1200;
-const RESPONSE_MAX_TOKENS = 360;
+const RESPONSE_MAX_TOKENS = 1000;
 
 const SYSTEM_PROMPT =
-  'あなたは Claude Code CLI のセッションログを読み、現在のタスクの概要と進捗を日本語 2〜3 行 (合計 200 文字程度) で要約するアシスタントです。ユーザーが最後に何を依頼したかを必ず踏まえてください。冗長な前置きや「要約します」のような枕は付けないでください。';
+  'あなたは Claude Code CLI のセッションログを読み、現在のタスクの概要と進捗を日本語 4〜6 行 (合計 400〜600 文字程度) で要約するアシスタントです。ユーザーが最後に何を依頼したかを必ず踏まえてください。冗長な前置きや「要約します」のような枕は付けないでください。';
 
 /**
- * Claude API で「セッションは今何をしていてどこまで進んだか」を 1〜2 行に要約する。
+ * Claude API で「セッションは今何をしていてどこまで進んだか」を 4〜6 行に要約する。
  *
  * - `jsonlPath` 単位でメモリにキャッシュ (1 jsonl = 最大 1 要約)。
  *   生成時の `mtimeMs` も一緒に保持し、新しい mtime のリクエスト時に
@@ -108,20 +108,37 @@ export class Summarizer {
    * 計算完了時に `onUpdate(jsonlPath, result)` が呼ばれる (SSE push のトリガに使う想定)。
    *
    * 旧結果は新結果が完成するまで `peek` 経由で見える。
+   *
+   * `opts.force` を true にするとキャッシュを無視して必ず再計算をキックする。
+   * 既に inflight な計算があればそれを共有する (二重起動はしない)。UI 側「再要約」ボタンで使う。
    */
-  getOrCompute(jsonlPath: string, mtimeMs: number, input: SummarizeInput): SummaryResult {
+  getOrCompute(
+    jsonlPath: string,
+    mtimeMs: number,
+    input: SummarizeInput,
+    opts: { force?: boolean } = {},
+  ): SummaryResult {
     if (!this.apiKey) return { state: 'unavailable' };
-    const cached = this.cache.get(jsonlPath);
-    if (cached && cached.mtimeMs === mtimeMs) return cached.result;
+    if (!opts.force) {
+      const cached = this.cache.get(jsonlPath);
+      if (cached && cached.mtimeMs === mtimeMs) return cached.result;
+    }
     if (!this.inflight.has(jsonlPath)) this.startCompute(jsonlPath, mtimeMs, input);
     return { state: 'pending' };
   }
 
   /** Phase 2 検証 / 結合テスト用に「完了まで待つ」API。通常 UI からは使わない。 */
-  async wait(jsonlPath: string, mtimeMs: number, input: SummarizeInput): Promise<SummaryResult> {
+  async wait(
+    jsonlPath: string,
+    mtimeMs: number,
+    input: SummarizeInput,
+    opts: { force?: boolean } = {},
+  ): Promise<SummaryResult> {
     if (!this.apiKey) return { state: 'unavailable' };
-    const cached = this.cache.get(jsonlPath);
-    if (cached && cached.mtimeMs === mtimeMs) return cached.result;
+    if (!opts.force) {
+      const cached = this.cache.get(jsonlPath);
+      if (cached && cached.mtimeMs === mtimeMs) return cached.result;
+    }
     let p = this.inflight.get(jsonlPath);
     if (!p) p = this.startCompute(jsonlPath, mtimeMs, input);
     return p;
@@ -221,7 +238,7 @@ function errorMessage(err: unknown): string {
 export function buildUserPrompt(input: SummarizeInput): string {
   const sections: string[] = [
     '以下は Claude Code CLI のセッションのスナップショットです。',
-    'このセッションが「今何をしていて、どこまで進んでいるか」を 2〜3 行で要約してください。',
+    'このセッションが「今何をしていて、どこまで進んでいるか」を 4〜6 行で要約してください。',
     'ユーザーが最後に何を依頼したかを必ず踏まえてください。',
   ];
 
