@@ -5,18 +5,33 @@ import dotenv from 'dotenv';
 // repo root の .env を読む。__dirname は dist/ もしくは src/ なので 2 階層上がリポジトリ直下。
 dotenv.config({ path: path.resolve(__dirname, '../../.env') });
 
+import { parseClientTokens, assertServerAuthConfigured } from './auth';
 import { startServer } from './server';
+
+type Mode = 'local' | 'client' | 'server';
+const MODES: readonly Mode[] = ['local', 'client', 'server'];
 
 interface Options {
   port: number;
   host: string;
+  mode: Mode;
 }
 
 function parseArgs(argv: string[]): Options {
-  const opts: Options = { port: 8181, host: '127.0.0.1' };
+  const opts: Options = { port: 8181, host: '127.0.0.1', mode: 'local' };
+  const setMode = (v: string | undefined): void => {
+    if (!v || !MODES.includes(v as Mode)) {
+      throw new Error(`--mode が不正です: ${v} (local|client|server)`);
+    }
+    opts.mode = v as Mode;
+  };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
-    if (a === '--port') {
+    if (a === '--mode') {
+      setMode(argv[++i]);
+    } else if (a.startsWith('--mode=')) {
+      setMode(a.slice('--mode='.length));
+    } else if (a === '--port') {
       const v = argv[++i];
       const n = Number(v);
       if (!Number.isFinite(n) || n <= 0 || n > 65535) {
@@ -51,9 +66,15 @@ function printHelp(): void {
   ai-monitor [options]
 
 オプション:
+  --mode <m>     local | client | server (デフォルト: local)
   --port <n>     バインドするポート (デフォルト: 8181)
   --host <addr>  バインドするホスト (デフォルト: 127.0.0.1)
   --help, -h     このヘルプを表示
+
+モード:
+  local   ローカル FS を pull して loopback 配信 (現行どおり)
+  client  ローカル FS を pull しつつ公開サーバへ push (Phase 4 で実装)
+  server  公開アグリゲータ。端末別 Bearer で push を受け集約する
 `);
 }
 
@@ -64,7 +85,18 @@ try {
   } else {
     console.warn('[ai-monitor] ANTHROPIC_API_KEY: 未設定 (要約機能 無効)');
   }
-  startServer(opts);
+
+  if (opts.mode === 'server') {
+    // 端末別トークンを fail-fast 検証してから startServer に渡す (photorans 流儀)。
+    const clientTokens = parseClientTokens(process.env.CCM_CLIENT_TOKENS);
+    assertServerAuthConfigured(clientTokens);
+    const corsOrigins = parseClientTokens(process.env.CCM_CORS_ORIGIN);
+    console.log(`[ai-monitor] mode: server (ingest tokens: ${clientTokens.length}, CORS origins: ${corsOrigins.length})`);
+    startServer({ ...opts, clientTokens, corsOrigins });
+  } else {
+    console.log(`[ai-monitor] mode: ${opts.mode}`);
+    startServer(opts);
+  }
 } catch (err) {
   const msg = err instanceof Error ? err.message : String(err);
   console.error(`[ai-monitor] 起動に失敗しました: ${msg}`);

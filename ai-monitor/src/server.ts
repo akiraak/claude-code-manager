@@ -1,19 +1,28 @@
 import path from 'path';
 import express, { Request, Response } from 'express';
+import { assertServerAuthConfigured, bearerAuth } from './auth';
 import { ensureAwaitingInputDir, watchAwaitingInputMarkers } from './awaiting-input';
 import { LocalEntrySource, type EntrySource } from './entry-source';
+import { Cooldown, createIngestRouter, RateLimiter } from './ingest';
 import { decodeId, type ActivityState, type MonitorEntry } from './state';
+import { AggregateStore } from './store';
 import { Summarizer } from './summarize';
 import { findLastUserText, projectsDir, readTailEvents } from './transcript';
 import { buildProcessViewData, entryToDashboardCardData, renderDashboard, renderNotFound, renderProcessView } from './views';
 
+type ServerMode = 'local' | 'client' | 'server';
+
 interface ServerOptions {
   port: number;
   host: string;
-}
-
-function corsHeaders(res: Response): void {
-  res.setHeader('Access-Control-Allow-Origin', '*');
+  /** 動作モード。既定 local (現行どおり)。server のみ ingest + 認証 + CORS 限定を有効化する。 */
+  mode?: ServerMode;
+  /** server モード: ingest を許可する端末別トークン (fail-fast 済みを想定)。 */
+  clientTokens?: readonly string[];
+  /** server モード: CORS を反映する許可オリジン (空なら CORS ヘッダを付けない)。 */
+  corsOrigins?: readonly string[];
+  /** server モード: 集約ストア (未指定なら内部生成)。Phase 3 で RemoteEntrySource に渡す。 */
+  store?: AggregateStore;
 }
 
 function noStore(res: Response): void {
@@ -66,6 +75,8 @@ function snapshotFingerprint(entries: MonitorEntry[]): string {
 
 export function startServer(opts: ServerOptions, source: EntrySource = new LocalEntrySource()): void {
   const app = express();
+  const mode: ServerMode = opts.mode ?? 'local';
+  const corsOrigins = opts.corsOrigins ?? [];
 
   // PermissionRequest hook の marker 置き場を起動時に確保しておく
   // (`fs.watch` は存在しないディレクトリを監視できないため)
@@ -81,11 +92,37 @@ export function startServer(opts: ServerOptions, source: EntrySource = new Local
     },
   });
 
-  // すべてのレスポンスに CORS を付ける (ループバック専用前提で `*`)
-  app.use((_req, res, next) => {
-    corsHeaders(res);
+  // CORS。local/client はループバック専用前提で `*`。
+  // server は公開されるため `*` をやめ、許可オリジンの Origin のみ反映する。
+  app.use((req, res, next) => {
+    if (mode === 'server') {
+      const origin = req.headers.origin;
+      if (origin && corsOrigins.includes(origin)) {
+        res.setHeader('Access-Control-Allow-Origin', origin);
+        res.setHeader('Vary', 'Origin');
+      }
+    } else {
+      res.setHeader('Access-Control-Allow-Origin', '*');
+    }
     next();
   });
+
+  // server モードのみ: 端末別 Bearer 認証付きの Ingestion を有効化する。
+  // local/client モードでは一切マウントしない (現行の読み取り専用挙動を維持)。
+  if (mode === 'server') {
+    const tokens = opts.clientTokens ?? [];
+    // cli.ts で fail-fast 済みだが、startServer 直接呼びにも備えて再確認する。
+    assertServerAuthConfigured(tokens);
+    const store = opts.store ?? new AggregateStore();
+    const snapshotLimiter = new RateLimiter({ windowMs: 10_000, max: 30 });
+    const voiceCooldown = new Cooldown({ ms: 15_000 });
+    app.use(
+      '/api/ingest',
+      bearerAuth(tokens),
+      express.json({ limit: '512kb' }),
+      createIngestRouter({ store, snapshotLimiter, voiceCooldown }),
+    );
+  }
 
   // Phase 1 で追加。ダッシュボード iframe を自己更新化するための軽量 JSON API。
   // `renderDashboard` と同じ整形ロジック (entryToDashboardCardData) を共有するので、

@@ -9,7 +9,12 @@
     - [ ] Part 2: g3plus + Cloudflare Tunnel `ccm.chobi.me` 疎通 PoC ※別作業 (g3plus/Cloudflare 側)
     - [x] Part 3: Gemini TTS → ブラウザ再生 PoC (HTTP 直叩き + 再生ページ + 実走)
     - [x] Part 4: redaction/保持方針の確定 (redaction.ts PoC + テスト)
-  - [ ] Phase 2: サーバ — 認証 + Ingestion 基盤 (Bearer/UIセッション・CORS限定・`/api/ingest/*`・集約ストア・dedup/レート制限)
+  - [x] Phase 2: サーバ — 認証 + Ingestion 基盤 (Bearer/UIセッション・CORS限定・`/api/ingest/*`・集約ストア・dedup/レート制限) [plan](docs/plans/claude-progress-voice-phase2.md)
+    - [x] Step 1: 認証 `auth.ts` (Bearer パース/fail-fast/ミドルウェア) + test
+    - [x] Step 2: 集約ストア `store.ts` (upsert/list/getEvents/prune/voice・TTL・dedup) + test
+    - [x] Step 3: Ingestion `ingest.ts` (validateSnapshot/voiceEvent・RateLimiter/Cooldown・ルータ工場) + test
+    - [x] Step 4: 配線 `cli.ts`/`server.ts` (`--mode`・server 限定で auth+ingest+CORS限定・local 不変)
+    - [x] Step 5: `npm run build` + `npm test` 緑 / プラン実走ログ更新
   - [ ] Phase 3: サーバ — ダッシュボードミラー配信 (集約ストア→views.ts描画・SSE push駆動化・ログインページ)
   - [ ] Phase 4: クライアント — uplink エージェント (`--mode client`・既存検出再利用・push・リトライ/バッファ・WSL2/Mac両対応)
   - [ ] Phase 5: ペルソナ文生成 + TTS (Haikuでキャラ口調短文・TTS抽象化+キャッシュ・`/api/voice/audio/:id`認証付き)
