@@ -1,5 +1,10 @@
 # DONE
 
+- 2026-05-13: 要約に直近ユーザー入力を含める + 要約カードを折りたたみ/展開可能にする ([plan](docs/plans/archive/summary-context-and-collapsible.md))
+    - Phase 1 (要約コンテキスト拡張): `server.ts` の要約用 `readTailEvents` 窓を 50 → 300 に、`Summarizer.getOrCompute` / `wait` に `SummarizeInput` 形式の引数を導入し `recentUserText` を渡せるように、`renderEventsForPrompt` を「ピン留め (直近ユーザー入力) + 直近」の 2 セクション構築に変更し `tool-use` / `tool-result` を除外
+    - Phase 2 (折りたたみ UI): `.card-summary-text` の line-clamp を 3 → 6 に拡大し、`.card-summary.expanded` で clamp 解除、`renderSummaryFromData` の OK ブランチに `data-collapsible` / `data-summary-key` / `<button data-summary-toggle>` を出し、`DASHBOARD_SCRIPT` にトグルクリックハンドラ + 短い要約時のボタン非表示判定を追加、`DASHBOARD_LIVE_SCRIPT.updateCard` で `data-summary-key` 一致時のみ展開状態を復元
+    - `views.test.ts` に新 OK ブランチの DOM 構造テストを追加
+    - Phase 3 手動確認: ツール往復 30 回以上のセッションで要約に直近ユーザー入力が反映されること / 展開 / 折りたたみ / SSE 中の状態保持 / 短い要約でトグル非表示 を確認
 - 2026-05-13: README.md にアプリの説明と使い方を入れて更新 ([plan](docs/plans/archive/readme-update.md))
     - 古い数値・条件を実装と一致させた: `STOPPED_RETENTION_SEC` 10 分 → 24 時間 (`86_400`)、要約「1〜2 行」→「4〜6 行 / 400〜600 文字」、AI処理中 バッジ条件に「`/clear` `/help` `! ls` 等のローカルコマンド直後は除く」を追記、要約モデル / `RESPONSE_MAX_TOKENS=1000` / `PROMPT_MAX_CHARS=6000` / `PINNED_USER_MAX_CHARS=1200` を実装ファイル準拠で記載
     - 冒頭の概要を 2〜3 段落に拡張 (なぜ作ったか / 何が見られるか / 対象ユーザーを明示)

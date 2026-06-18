@@ -25,6 +25,7 @@ const CATEGORIES = [EDITABLE_TAB, ...CATEGORY_DEFS.map(c => c.name), ...CUSTOM_T
 
 const STORAGE_CATEGORY = 'vibeboard.activeCategory';
 const STORAGE_EXPANDED = 'vibeboard.expanded';
+const STORAGE_SIDEBAR_COLLAPSED = 'vibeboard.sidebarCollapsed';
 
 const sidebarNav = document.getElementById('sidebar-nav');
 const contentArea = document.getElementById('content-area');
@@ -1650,8 +1651,40 @@ function disconnectCustomTabSource() {
   customTabState.sourceName = null;
 }
 
+function setupSidebarToggle() {
+  const toggle = document.getElementById('sidebar-toggle');
+  const mainBody = document.querySelector('.main-body');
+  if (!toggle || !mainBody) return;
+
+  // 初期状態: <head> のインラインスクリプトが html.pre-sidebar-collapsed を付けているので
+  // それを正規の .main-body.sidebar-collapsed に転写し、pre クラスは外す。
+  const collapsedInitially = document.documentElement.classList.contains('pre-sidebar-collapsed');
+  if (collapsedInitially) {
+    mainBody.classList.add('sidebar-collapsed');
+  }
+  document.documentElement.classList.remove('pre-sidebar-collapsed');
+
+  function applyAriaLabel(collapsed) {
+    const label = collapsed ? 'サイドバーを展開' : 'サイドバーを折りたたむ';
+    toggle.setAttribute('aria-label', label);
+    toggle.setAttribute('title', label);
+    toggle.setAttribute('aria-expanded', collapsed ? 'false' : 'true');
+  }
+  applyAriaLabel(collapsedInitially);
+
+  toggle.addEventListener('click', () => {
+    const collapsed = mainBody.classList.toggle('sidebar-collapsed');
+    try {
+      if (collapsed) localStorage.setItem(STORAGE_SIDEBAR_COLLAPSED, '1');
+      else localStorage.removeItem(STORAGE_SIDEBAR_COLLAPSED);
+    } catch (e) {}
+    applyAriaLabel(collapsed);
+  });
+}
+
 async function init() {
   loadPersisted();
+  setupSidebarToggle();
   buildTabs();
   setupTabs();
   setupBeforeUnload();
