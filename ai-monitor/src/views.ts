@@ -1025,8 +1025,12 @@ export interface ProcessViewData {
   renderedAt: string;
 }
 
-export function buildProcessViewData(entry: MonitorEntry): ProcessViewData {
-  const events = entry.transcript ? readTailEvents(entry.transcript.jsonlPath, 200) : [];
+/**
+ * @param events 詳細表示するイベント列。未指定なら従来どおり `entry.transcript.jsonlPath` から読む
+ *   (local モード)。server モードは jsonl を持たないため `EntrySource.readEvents` の結果を渡す。
+ */
+export function buildProcessViewData(entry: MonitorEntry, events?: NormalizedEvent[]): ProcessViewData {
+  const evs = events ?? (entry.transcript ? readTailEvents(entry.transcript.jsonlPath, 200) : []);
   const lastActivityLabel = entry.lastActivityAt
     ? `${entry.lastActivityAt} (${fmtRelativeTime(entry.lastActivityAt)})`
     : '—';
@@ -1041,7 +1045,7 @@ export function buildProcessViewData(entry: MonitorEntry): ProcessViewData {
     pid: String(entry.process?.pid ?? '—'),
     lastActivityLabel,
     sessionId: entry.transcript?.sessionId ?? '—',
-    events: events.map((ev, i) => {
+    events: evs.map((ev, i) => {
       const key = eventKey(ev, i);
       return { key, html: renderEvent(ev, key) };
     }),
@@ -1205,8 +1209,8 @@ const PROCESS_VIEW_LIVE_SCRIPT = `
 })();
 `;
 
-export function renderProcessView(entry: MonitorEntry): string {
-  const data = buildProcessViewData(entry);
+export function renderProcessView(entry: MonitorEntry, events?: NormalizedEvent[]): string {
+  const data = buildProcessViewData(entry, events);
   const eventsHtml = data.events.length === 0
     ? `<div class="empty">表示できるイベントがありません (jsonl が無いか空)。</div>`
     : data.events.map(e => e.html).join('\n');

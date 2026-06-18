@@ -6,7 +6,9 @@ import dotenv from 'dotenv';
 dotenv.config({ path: path.resolve(__dirname, '../../.env') });
 
 import { parseClientTokens, assertServerAuthConfigured } from './auth';
+import { RemoteEntrySource } from './entry-source';
 import { startServer } from './server';
+import { AggregateStore } from './store';
 
 type Mode = 'local' | 'client' | 'server';
 const MODES: readonly Mode[] = ['local', 'client', 'server'];
@@ -92,7 +94,9 @@ try {
     assertServerAuthConfigured(clientTokens);
     const corsOrigins = parseClientTokens(process.env.CCM_CORS_ORIGIN);
     console.log(`[ai-monitor] mode: server (ingest tokens: ${clientTokens.length}, CORS origins: ${corsOrigins.length})`);
-    startServer({ ...opts, clientTokens, corsOrigins });
+    // 集約ストアを生成し、ingest (opts.store) と描画 (RemoteEntrySource) で同一インスタンスを共有する。
+    const store = new AggregateStore();
+    startServer({ ...opts, clientTokens, corsOrigins, store }, new RemoteEntrySource(store));
   } else {
     console.log(`[ai-monitor] mode: ${opts.mode}`);
     startServer(opts);

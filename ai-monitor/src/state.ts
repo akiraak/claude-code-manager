@@ -22,7 +22,7 @@ import {
  * 要約がボタンに戻る」体験になるので、結果は返したまま `stale: true` を
  * 立てて UI に色違いを依頼する。
  */
-function readSummaryStatus(
+export function readSummaryStatus(
   summarizer: Summarizer,
   jsonlPath: string,
   mtimeMs: number,

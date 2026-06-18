@@ -167,6 +167,30 @@ test('ルータ: snapshot レート超過は 429', async () => {
   );
 });
 
+test('ルータ: onChange は changed snapshot と voice-event でのみ発火する (dedup では発火しない)', async () => {
+  const store = new AggregateStore();
+  let clock = 1000;
+  let fired = 0;
+  await withServer(
+    {
+      store,
+      snapshotLimiter: new RateLimiter({ windowMs: 10_000, max: 100 }),
+      voiceCooldown: new Cooldown({ ms: 0 }),
+      now: () => clock,
+      onChange: () => { fired++; },
+    },
+    async (base) => {
+      await post(base, '/api/ingest/snapshot', validSnapshotBody());
+      assert.equal(fired, 1, 'changed snapshot で 1 回');
+      clock = 2000;
+      await post(base, '/api/ingest/snapshot', validSnapshotBody());
+      assert.equal(fired, 1, 'dedup (changed:false) では発火しない');
+      await post(base, '/api/ingest/voice-event', validVoiceBody());
+      assert.equal(fired, 2, 'voice-event で発火');
+    },
+  );
+});
+
 test('ルータ: voice-event はクールダウン中 429、別種別は通る', async () => {
   let clock = 0;
   await withServer(

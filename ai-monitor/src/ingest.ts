@@ -166,6 +166,11 @@ export interface IngestDeps {
   voiceCooldown: Cooldown;
   /** 現在時刻 (ms)。テストで固定するため注入可能。既定は Date.now。 */
   now?: () => number;
+  /**
+   * ストアが変化したときに呼ばれる (SSE push 駆動用)。
+   * snapshot は `changed:true` のときのみ、voice-event は記録後に毎回発火する。
+   */
+  onChange?: () => void;
 }
 
 /**
@@ -173,6 +178,7 @@ export interface IngestDeps {
  */
 export function createIngestRouter(deps: IngestDeps): Router {
   const now = deps.now ?? (() => Date.now());
+  const onChange = deps.onChange ?? (() => { /* noop */ });
   const router = Router();
 
   router.post('/snapshot', (req: Request, res: Response) => {
@@ -186,6 +192,8 @@ export function createIngestRouter(deps: IngestDeps): Router {
       return;
     }
     const { changed } = deps.store.upsertSnapshot(parsed.value, now());
+    // 内容に変化があったときだけ SSE を起こす (dedup された再送では起こさない)。
+    if (changed) onChange();
     res.json({ ok: true, changed });
   });
 
@@ -202,6 +210,7 @@ export function createIngestRouter(deps: IngestDeps): Router {
       return;
     }
     deps.store.recordVoiceEvent(v, now());
+    onChange();
     res.json({ ok: true });
   });
 

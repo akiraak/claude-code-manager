@@ -64,6 +64,13 @@ export interface StoredVoiceEvent extends VoiceEventPayload {
   receivedAtMs: number;
 }
 
+/** `listSessions` が返す 1 セッション。entry に加えて突き合わせ用の clientId / projectDir を持つ。 */
+export interface RemoteSession {
+  clientId: string;
+  projectDir: string;
+  entry: SnapshotEntry;
+}
+
 interface StoredSession {
   clientId: string;
   projectDir: string;
@@ -169,23 +176,27 @@ export class AggregateStore {
     }
   }
 
-  /** TTL 内で entry を持つレコードを返す (Phase 3 の RemoteEntrySource 用)。 */
-  listEntries(nowMs: number): SnapshotEntry[] {
+  /**
+   * TTL 内で entry を持つセッションを **clientId 付き**で返す (Phase 3 の RemoteEntrySource 用)。
+   *
+   * `SnapshotEntry.id` は端末側で `encodeId(projectDir)` を振っており、複数端末が同じ
+   * `projectDir` を push すると衝突する。RemoteEntrySource はこの `clientId` を使って
+   * `(clientId, projectDir)` の合成 id を作り、ミラー上で 1 カードに分離する。
+   */
+  listSessions(nowMs: number): RemoteSession[] {
     this.prune(nowMs);
-    const out: SnapshotEntry[] = [];
+    const out: RemoteSession[] = [];
     for (const s of this.sessions.values()) {
-      if (s.entry) out.push(s.entry);
+      if (s.entry) out.push({ clientId: s.clientId, projectDir: s.projectDir, entry: s.entry });
     }
     return out;
   }
 
-  /** entry id でイベント列を返す (Phase 3 のプロセス詳細用)。 */
-  getEvents(id: string, nowMs: number): NormalizedEvent[] {
+  /** `(clientId, projectDir)` でイベント列を返す (Phase 3 のプロセス詳細 / 要約用)。 */
+  getEventsBySession(clientId: string, projectDir: string, nowMs: number): NormalizedEvent[] {
     this.prune(nowMs);
-    for (const s of this.sessions.values()) {
-      if (s.entry?.id === id) return s.events;
-    }
-    return [];
+    const s = this.sessions.get(sessionKey(clientId, projectDir));
+    return s ? s.events : [];
   }
 
   /** TTL 内の音声イベントを新しい順で返す (Phase 5/6 用)。 */

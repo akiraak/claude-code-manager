@@ -7,7 +7,7 @@ import { Cooldown, createIngestRouter, RateLimiter } from './ingest';
 import { decodeId, type ActivityState, type MonitorEntry } from './state';
 import { AggregateStore } from './store';
 import { Summarizer } from './summarize';
-import { findLastUserText, projectsDir, readTailEvents } from './transcript';
+import { projectsDir } from './transcript';
 import { buildProcessViewData, entryToDashboardCardData, renderDashboard, renderNotFound, renderProcessView } from './views';
 
 type ServerMode = 'local' | 'client' | 'server';
@@ -78,6 +78,15 @@ export function startServer(opts: ServerOptions, source: EntrySource = new Local
   const mode: ServerMode = opts.mode ?? 'local';
   const corsOrigins = opts.corsOrigins ?? [];
 
+  // SSE を ingest 到着で即時更新するためのトリガ集合 (server モードの push 駆動用)。
+  // 各 /api/watch 接続が自分の tick トリガを登録し、ingest 到着で一斉に叩く。
+  const watchTriggers = new Set<() => void>();
+  const notifyWatchers = (): void => {
+    for (const fn of watchTriggers) {
+      try { fn(); } catch { /* リスナのエラーは握りつぶす */ }
+    }
+  };
+
   // PermissionRequest hook の marker 置き場を起動時に確保しておく
   // (`fs.watch` は存在しないディレクトリを監視できないため)
   ensureAwaitingInputDir();
@@ -120,7 +129,7 @@ export function startServer(opts: ServerOptions, source: EntrySource = new Local
       '/api/ingest',
       bearerAuth(tokens),
       express.json({ limit: '512kb' }),
-      createIngestRouter({ store, snapshotLimiter, voiceCooldown }),
+      createIngestRouter({ store, snapshotLimiter, voiceCooldown, onChange: notifyWatchers }),
     );
   }
 
@@ -157,18 +166,19 @@ export function startServer(opts: ServerOptions, source: EntrySource = new Local
         res.status(400).json({ error: 'invalid id' });
         return;
       }
-      const projectDir = decodeId(itemId.slice('proc:'.length));
-      if (!projectDir) {
+      const id = itemId.slice('proc:'.length);
+      if (!id || !decodeId(id)) {
         res.status(400).json({ error: 'invalid id' });
         return;
       }
       const entries = await source.buildEntries({ summarizer });
-      const entry = entries.find(e => e.projectDir === projectDir);
+      // id 一致で探す (local: encodeId(projectDir) / remote: (clientId,projectDir) 合成。どちらも一意)。
+      const entry = entries.find(e => e.id === id);
       if (!entry) {
         res.status(404).json({ error: 'not found' });
         return;
       }
-      res.json(buildProcessViewData(entry));
+      res.json(buildProcessViewData(entry, source.readEvents(entry, 200)));
     } catch (err) {
       console.warn('[ai-monitor] /api/process.json 失敗', err);
       res.status(500).json({ error: 'internal' });
@@ -201,17 +211,16 @@ export function startServer(opts: ServerOptions, source: EntrySource = new Local
       }
       if (itemId.startsWith('proc:')) {
         const id = itemId.slice('proc:'.length);
-        const projectDir = decodeId(id);
-        if (!projectDir) {
+        if (!id || !decodeId(id)) {
           res.status(400).send(renderNotFound('item id が不正です'));
           return;
         }
-        const entry = entries.find(e => e.projectDir === projectDir);
+        const entry = entries.find(e => e.id === id);
         if (!entry) {
-          res.status(404).send(renderNotFound(`プロセスが見つかりません: ${projectDir}`));
+          res.status(404).send(renderNotFound(`プロセスが見つかりません: ${id}`));
           return;
         }
-        res.send(renderProcessView(entry));
+        res.send(renderProcessView(entry, source.readEvents(entry, 200)));
         return;
       }
       res.status(404).send(renderNotFound(`未知の item: ${itemId}`));
@@ -234,14 +243,14 @@ export function startServer(opts: ServerOptions, source: EntrySource = new Local
         res.status(400).json({ error: 'invalid id' });
         return;
       }
-      const projectDir = decodeId(itemId.slice('proc:'.length));
-      if (!projectDir) {
+      const id = itemId.slice('proc:'.length);
+      if (!id || !decodeId(id)) {
         res.status(400).json({ error: 'invalid id' });
         return;
       }
       const entries = await source.buildEntries({ summarizer });
-      const entry = entries.find(e => e.projectDir === projectDir);
-      if (!entry || !entry.transcript) {
+      const entry = entries.find(e => e.id === id);
+      if (!entry) {
         res.status(404).json({ error: 'not found' });
         return;
       }
@@ -249,20 +258,18 @@ export function startServer(opts: ServerOptions, source: EntrySource = new Local
         res.json({ state: 'unavailable' });
         return;
       }
-      // 要約は state 判定 (50 件) より広い窓 + ピン留め user-text で組み立てる。
-      // ツール往復が連続するセッションでも「直前のユーザー依頼」を必ず混ぜ込むため。
-      // 窓を 300 にしているのは、renderEventsForPrompt 側で tool-use / tool-result を捨てるため
-      // 150 だとツール往復の多いセッションで user/assistant の往復が数件しか拾えなくなるから。
-      const events = readTailEvents(entry.transcript.jsonlPath, 300);
-      const recalled = findLastUserText(entry.transcript.jsonlPath, entry.transcript.mtimeMs);
+      // 要約の対象 (キャッシュキー・mtime・計算入力) は source が供給する。
+      // local は jsonl から 300 件 + findLastUserText、remote は集約ストアから (jsonl 非依存)。
+      // 窓を広く取るのは renderEventsForPrompt が tool-use/result を捨てるため
+      // (狭いとツール往復の多いセッションで user/assistant が数件しか残らない)。
+      const target = source.summaryTargetOf(entry);
+      if (!target) {
+        res.status(404).json({ error: 'not found' });
+        return;
+      }
       // ?force=1 → キャッシュを無視して必ず再計算 (UI「再要約」ボタンで使う)
       const force = String(req.query.force ?? '') === '1';
-      const result = summarizer.getOrCompute(
-        entry.transcript.jsonlPath,
-        entry.transcript.mtimeMs,
-        { events, recentUserText: recalled ?? undefined },
-        { force },
-      );
+      const result = summarizer.getOrCompute(target.key, target.mtimeMs, target.input, { force });
       res.json(result);
     } catch (err) {
       console.warn('[ai-monitor] /api/summarize 失敗', err);
@@ -334,9 +341,7 @@ export function startServer(opts: ServerOptions, source: EntrySource = new Local
     };
     summaryListeners.add(onSummaryUpdate);
 
-    // PermissionRequest hook の marker ディレクトリ変化で即時 tick を回す
-    // (ポーリングだけだと最大 2 秒のラグが出る)。watch が張れない FS でも
-    // ポーリングで拾えるので失敗は問題なし。
+    // 変化検出で即時 tick を回す (ポーリングだけだと最大 2 秒のラグが出る)。
     // tick が走行中なら次の tick はリエントラントに走らないよう簡易ガード。
     let tickInflight = false;
     const triggerTick = (): void => {
@@ -344,11 +349,22 @@ export function startServer(opts: ServerOptions, source: EntrySource = new Local
       tickInflight = true;
       void tick().finally(() => { tickInflight = false; });
     };
-    const stopMarkerWatch = watchAwaitingInputMarkers(triggerTick);
+    // 即時更新のトリガ源はモードで分ける:
+    // - server: ingest 到着 (notifyWatchers) で push 駆動。marker はローカル専用なので張らない。
+    // - local/client: ローカル FS の PermissionRequest marker 変化で起こす (従来どおり)。
+    let stopTrigger: () => void;
+    if (mode === 'server') {
+      watchTriggers.add(triggerTick);
+      stopTrigger = () => { watchTriggers.delete(triggerTick); };
+    } else {
+      // watch が張れない FS でもポーリングで拾えるので失敗は問題なし。
+      const stopMarkerWatch = watchAwaitingInputMarkers(triggerTick);
+      stopTrigger = stopMarkerWatch;
+    }
 
     // 初回呼び出しで現在状態をベースラインに乗せる (即時 sidebar push)
     await tick();
-    // 2 秒間隔のポーリング
+    // 2 秒間隔のポーリング (push 駆動のフォールバック)
     const pollInterval = setInterval(tick, 2000);
     // keep-alive
     const pingInterval = setInterval(() => {
@@ -361,7 +377,7 @@ export function startServer(opts: ServerOptions, source: EntrySource = new Local
       clearInterval(pollInterval);
       clearInterval(pingInterval);
       summaryListeners.delete(onSummaryUpdate);
-      stopMarkerWatch();
+      stopTrigger();
     });
   });
 

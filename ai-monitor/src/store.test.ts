@@ -35,13 +35,15 @@ function voice(over: Partial<VoiceEventPayload> = {}): VoiceEventPayload {
   };
 }
 
-test('upsertSnapshot → listEntries で取り出せる', () => {
+test('upsertSnapshot → listSessions で clientId 付きで取り出せる', () => {
   const store = new AggregateStore();
   const r = store.upsertSnapshot(snapshot(), 1000);
   assert.equal(r.changed, true);
-  const entries = store.listEntries(1000);
-  assert.equal(entries.length, 1);
-  assert.equal(entries[0].id, 'id-1');
+  const sessions = store.listSessions(1000);
+  assert.equal(sessions.length, 1);
+  assert.equal(sessions[0].entry.id, 'id-1');
+  assert.equal(sessions[0].clientId, 'wsl2-akira');
+  assert.equal(sessions[0].projectDir, '-home-ubuntu-foo');
   assert.equal(store.size(), 1);
 });
 
@@ -67,27 +69,31 @@ test('mtime / state が変わると changed:true', () => {
   assert.equal(r2.changed, true);
 });
 
-test('別 client は別レコードになる', () => {
+test('別 client が同じ projectDir を push しても 2 レコードに分かれる (衝突しない)', () => {
   const store = new AggregateStore();
   store.upsertSnapshot(snapshot(), 1000);
   store.upsertSnapshot(snapshot({ clientId: 'mac-akira' }), 1000);
   assert.equal(store.size(), 2);
-  assert.equal(store.listEntries(1000).length, 2);
+  const sessions = store.listSessions(1000);
+  assert.equal(sessions.length, 2);
+  // 同じ projectDir でも clientId で区別できる
+  assert.deepEqual(sessions.map(s => s.clientId).sort(), ['mac-akira', 'wsl2-akira']);
 });
 
 test('TTL を過ぎた push 途絶レコードは prune される', () => {
   const store = new AggregateStore();
   store.upsertSnapshot(snapshot(), 1000);
   const future = 1000 + STOPPED_RETENTION_SEC * 1000 + 1;
-  assert.equal(store.listEntries(future).length, 0);
+  assert.equal(store.listSessions(future).length, 0);
   assert.equal(store.size(), 0);
 });
 
-test('getEvents は entry id でイベント列を返す', () => {
+test('getEventsBySession は (clientId, projectDir) でイベント列を返す', () => {
   const store = new AggregateStore();
   store.upsertSnapshot(snapshot(), 1000);
-  assert.equal(store.getEvents('id-1', 1000).length, 1);
-  assert.equal(store.getEvents('unknown', 1000).length, 0);
+  assert.equal(store.getEventsBySession('wsl2-akira', '-home-ubuntu-foo', 1000).length, 1);
+  assert.equal(store.getEventsBySession('mac-akira', '-home-ubuntu-foo', 1000).length, 0);
+  assert.equal(store.getEventsBySession('wsl2-akira', '-unknown', 1000).length, 0);
 });
 
 test('voice イベントはリングバッファ上限を超えない', () => {
@@ -104,7 +110,7 @@ test('voice イベントはリングバッファ上限を超えない', () => {
 test('スナップショット未着でも voice イベントは落とさない', () => {
   const store = new AggregateStore();
   store.recordVoiceEvent(voice(), 1000);
-  // entry が無いので listEntries には出ないが voice は残る
-  assert.equal(store.listEntries(1000).length, 0);
+  // entry が無いので listSessions には出ないが voice は残る
+  assert.equal(store.listSessions(1000).length, 0);
   assert.equal(store.recentVoiceEvents(1000).length, 1);
 });
