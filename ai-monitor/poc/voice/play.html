@@ -1,0 +1,79 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<title>Voice PoC — ブラウザ再生</title>
+<style>
+  body { font: 15px/1.6 system-ui, sans-serif; max-width: 640px; margin: 40px auto; padding: 0 16px; color: #1a1a1a; }
+  h1 { font-size: 20px; }
+  button { font: inherit; padding: 8px 16px; border-radius: 6px; border: 1px solid #c5dafd; background: #fff; color: #1565c0; cursor: pointer; }
+  button:hover { background: #f1f7ff; }
+  .log { margin-top: 16px; padding: 12px; background: #f5f5f5; border-radius: 6px; white-space: pre-wrap; font-family: ui-monospace, monospace; font-size: 13px; }
+  .row { display: flex; gap: 12px; align-items: center; margin: 12px 0; }
+  .muted { color: #666; font-size: 13px; }
+</style>
+</head>
+<body>
+  <h1>🔊 Voice PoC 再生</h1>
+  <p class="muted">
+    本番 UI の「SSE → 再生キュー → 順次再生」を最小再現したもの。
+    ブラウザの autoplay 制限があるので、初回だけ ON ボタンのクリックで音声コンテキストを解放する。
+  </p>
+
+  <div class="row">
+    <button id="enable">🔊 再生を有効化 (autoplay 解除)</button>
+    <button id="play" disabled>▶ out/voice.wav を再生</button>
+    <label class="muted">音量 <input id="vol" type="range" min="0" max="1" step="0.05" value="1"></label>
+  </div>
+
+  <div class="log" id="log">待機中…</div>
+
+  <script>
+    const logEl = document.getElementById('log');
+    const log = (m) => { logEl.textContent = m + '\n' + logEl.textContent; };
+
+    let enabled = false;
+    const audio = new Audio();
+    document.getElementById('vol').addEventListener('input', (e) => { audio.volume = Number(e.target.value); });
+
+    // 本番では SSE 受信 → キューに push → 順次再生する。ここでは固定 1 件。
+    const queue = [];
+    let playing = false;
+
+    async function pump() {
+      if (playing) return;
+      const url = queue.shift();
+      if (!url) return;
+      playing = true;
+      try {
+        // 本番は credentials:'include' で Cloudflare Access cookie を付ける
+        const res = await fetch(url, { cache: 'no-store' });
+        if (!res.ok) throw new Error('HTTP ' + res.status);
+        const blob = await res.blob();
+        const objUrl = URL.createObjectURL(blob);
+        audio.src = objUrl;
+        await audio.play();
+        log('再生開始: ' + url + ' (' + blob.size + ' bytes, type=' + blob.type + ')');
+        audio.onended = () => { URL.revokeObjectURL(objUrl); playing = false; pump(); };
+      } catch (err) {
+        log('再生失敗: ' + err);
+        playing = false;
+      }
+    }
+
+    document.getElementById('enable').addEventListener('click', async () => {
+      // 無音を 1 回鳴らして autoplay ポリシーを解除する
+      try { await audio.play().catch(() => {}); audio.pause(); } catch (e) {}
+      enabled = true;
+      document.getElementById('play').disabled = false;
+      log('再生有効化 OK。▶ ボタンで out/voice.wav を再生できます。');
+    });
+
+    document.getElementById('play').addEventListener('click', () => {
+      if (!enabled) { log('先に「再生を有効化」を押してください'); return; }
+      queue.push('out/voice.wav?ts=' + Date.now());
+      pump();
+    });
+  </script>
+</body>
+</html>

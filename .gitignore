@@ -5,3 +5,6 @@ ai-monitor/dist/
 node_modules/
 .claude/
 .env
+
+# PoC が生成する音声 (コミットしない)
+ai-monitor/poc/voice/out/

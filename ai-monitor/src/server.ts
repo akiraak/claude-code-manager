@@ -1,7 +1,8 @@
 import path from 'path';
 import express, { Request, Response } from 'express';
 import { ensureAwaitingInputDir, watchAwaitingInputMarkers } from './awaiting-input';
-import { buildEntries, decodeId, type ActivityState, type MonitorEntry } from './state';
+import { LocalEntrySource, type EntrySource } from './entry-source';
+import { decodeId, type ActivityState, type MonitorEntry } from './state';
 import { Summarizer } from './summarize';
 import { findLastUserText, projectsDir, readTailEvents } from './transcript';
 import { buildProcessViewData, entryToDashboardCardData, renderDashboard, renderNotFound, renderProcessView } from './views';
@@ -63,7 +64,7 @@ function snapshotFingerprint(entries: MonitorEntry[]): string {
     .join('\n');
 }
 
-export function startServer(opts: ServerOptions): void {
+export function startServer(opts: ServerOptions, source: EntrySource = new LocalEntrySource()): void {
   const app = express();
 
   // PermissionRequest hook の marker 置き場を起動時に確保しておく
@@ -91,7 +92,7 @@ export function startServer(opts: ServerOptions): void {
   // クライアント側で時刻フォーマット / preview 切り詰めを再実装する必要はない。
   app.get('/api/dashboard.json', async (_req: Request, res: Response) => {
     try {
-      const entries = await buildEntries({ summarizer });
+      const entries = await source.buildEntries({ summarizer });
       noStore(res);
       res.setHeader('Content-Type', 'application/json; charset=utf-8');
       res.json({
@@ -124,7 +125,7 @@ export function startServer(opts: ServerOptions): void {
         res.status(400).json({ error: 'invalid id' });
         return;
       }
-      const entries = await buildEntries({ summarizer });
+      const entries = await source.buildEntries({ summarizer });
       const entry = entries.find(e => e.projectDir === projectDir);
       if (!entry) {
         res.status(404).json({ error: 'not found' });
@@ -139,7 +140,7 @@ export function startServer(opts: ServerOptions): void {
 
   app.get('/api/sidebar', async (_req: Request, res: Response) => {
     try {
-      const entries = await buildEntries({ summarizer });
+      const entries = await source.buildEntries({ summarizer });
       noStore(res);
       res.setHeader('Content-Type', 'application/json; charset=utf-8');
       res.json({ items: buildSidebarItems(entries) });
@@ -156,7 +157,7 @@ export function startServer(opts: ServerOptions): void {
     res.setHeader('Content-Security-Policy', "frame-ancestors http://127.0.0.1:* http://localhost:*");
 
     try {
-      const entries = await buildEntries({ summarizer });
+      const entries = await source.buildEntries({ summarizer });
       if (itemId === 'dashboard' || itemId === '') {
         res.send(renderDashboard(entries));
         return;
@@ -201,7 +202,7 @@ export function startServer(opts: ServerOptions): void {
         res.status(400).json({ error: 'invalid id' });
         return;
       }
-      const entries = await buildEntries({ summarizer });
+      const entries = await source.buildEntries({ summarizer });
       const entry = entries.find(e => e.projectDir === projectDir);
       if (!entry || !entry.transcript) {
         res.status(404).json({ error: 'not found' });
@@ -249,7 +250,7 @@ export function startServer(opts: ServerOptions): void {
     const tick = async (): Promise<void> => {
       if (!alive) return;
       try {
-        const entries = await buildEntries({ summarizer });
+        const entries = await source.buildEntries({ summarizer });
         const fp = snapshotFingerprint(entries);
         if (fp !== lastFingerprint) {
           // サイドバー構成 (cwd/PID/state) が変わったとき
