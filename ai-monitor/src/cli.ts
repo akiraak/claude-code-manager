@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import os from 'os';
 import path from 'path';
 import dotenv from 'dotenv';
 
@@ -9,6 +10,7 @@ import { parseClientTokens, assertServerAuthConfigured } from './auth';
 import { RemoteEntrySource } from './entry-source';
 import { startServer } from './server';
 import { AggregateStore } from './store';
+import { loadClientConfig, startUplink } from './uplink';
 
 type Mode = 'local' | 'client' | 'server';
 const MODES: readonly Mode[] = ['local', 'client', 'server'];
@@ -97,6 +99,13 @@ try {
     // 集約ストアを生成し、ingest (opts.store) と描画 (RemoteEntrySource) で同一インスタンスを共有する。
     const store = new AggregateStore();
     startServer({ ...opts, clientTokens, corsOrigins, store }, new RemoteEntrySource(store));
+  } else if (opts.mode === 'client') {
+    // client: ローカルダッシュボード (loopback・local と同挙動) に加えて公開サーバへ uplink push。
+    // 送信設定の検証 (fail-fast) は startServer より先に行い、不正なら exit 1 させる。
+    const config = loadClientConfig(process.env, os.hostname());
+    console.log('[ai-monitor] mode: client');
+    startServer(opts);
+    startUplink(config);
   } else {
     console.log(`[ai-monitor] mode: ${opts.mode}`);
     startServer(opts);

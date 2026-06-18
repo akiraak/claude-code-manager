@@ -21,7 +21,12 @@
     - [x] Step 3: `ingest.ts` onChange + `server.ts`/`cli.ts` 配線 (RemoteEntrySource・id 探索・SSE push・marker watch ゲート)
     - [x] Step 4: `npm run build` + `npm test` 緑 / server モード実走ログ
     - 注: 「ログインページ」は親プラン確定どおり Cloudflare Access (Phase 7) に委譲 (本フェーズ対象外)
-  - [ ] Phase 4: クライアント — uplink エージェント (`--mode client`・既存検出再利用・push・リトライ/バッファ・WSL2/Mac両対応)
+  - [x] Phase 4: クライアント — uplink エージェント (`--mode client`・既存検出再利用・push・リトライ/バッファ・WSL2/Mac両対応) [plan](docs/plans/claude-progress-voice-phase4.md)
+    - [x] Step 1: 設定 + allowlist + シリアライズ + 状態遷移検出 (純粋部) + test
+    - [x] Step 2: HTTP poster + voice queue + ランナー `startUplink` + test
+    - [x] Step 3: `processes.ts` platform 分岐 + darwin スキャフォルド / `cli.ts` client 配線
+    - [x] Step 4: `npm run build` + `npm test` 緑 / dryrun 実走ログ / プラン更新
+    - 注: macOS の process 検出 (`ps`+`lsof`) は後追い。`processes.ts` の darwin はスキャフォルド (空配列)
   - [ ] Phase 5: ペルソナ文生成 + TTS (Haikuでキャラ口調短文・TTS抽象化+キャッシュ・`/api/voice/audio/:id`認証付き)
   - [ ] Phase 6: Web UI 再生 + ミラー表示 (ログインUI・ON/OFF/音量/フィルタ/履歴・SSE順次再生)
   - [ ] Phase 7: デプロイ & 公開 (g3plus に Docker compose 追加・Cloudflare Tunnel `ccm.chobi.me`・Access ポリシー)

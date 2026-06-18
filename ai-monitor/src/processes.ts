@@ -39,8 +39,37 @@ function readCwd(pid: number): string | null {
   }
 }
 
-// `pgrep -af claude` で候補 PID を拾い、本物の claude プロセスに絞り込む。
+/**
+ * 稼働中の claude CLI プロセスを列挙する。プラットフォームで実装を分ける。
+ *
+ * - Linux / WSL2: `pgrep -af` + `/proc/<pid>/{comm,cmdline,cwd}` ({@link listClaudeProcessesLinux})。
+ * - macOS (darwin): `/proc` が無いため別実装が要る。現状は **スキャフォルドのみ**
+ *   ({@link listClaudeProcessesDarwin} が空配列 + 1 回 warn)。`ps`+`lsof` ベースの実装は後追い
+ *   (docs/plans/claude-progress-voice-phase4.md「7) processes.ts」)。
+ */
 export async function listClaudeProcesses(): Promise<ClaudeProcess[]> {
+  if (process.platform === 'darwin') return listClaudeProcessesDarwin();
+  return listClaudeProcessesLinux();
+}
+
+let warnedDarwinUnsupported = false;
+
+/**
+ * macOS の process 検出スキャフォルド。実機検証ができないため後追いとする
+ * (ユーザー確定 2026-06-18: 今は WSL2 中心)。現状は空配列を返してクラッシュさせない
+ * (Mac では jsonl 由来の stopped カードのみ表示される)。`ps -axww -o pid=,comm=` +
+ * `lsof -a -d cwd -p <pid> -Fn` ベースの実装をここに埋める予定。
+ */
+async function listClaudeProcessesDarwin(): Promise<ClaudeProcess[]> {
+  if (!warnedDarwinUnsupported) {
+    warnedDarwinUnsupported = true;
+    console.warn('[ai-monitor] macOS の process 検出は未実装です (後追い)。稼働中 CLI は検出されません');
+  }
+  return [];
+}
+
+// `pgrep -af claude` で候補 PID を拾い、本物の claude プロセスに絞り込む (Linux / WSL2)。
+async function listClaudeProcessesLinux(): Promise<ClaudeProcess[]> {
   let stdout = '';
   try {
     const r = await execFileAsync('pgrep', ['-af', 'claude']);
