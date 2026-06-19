@@ -1,5 +1,16 @@
 # DONE
 
+- 2026-06-18: claudeの進捗状況を音声でしゃべる機能 (push 型・公開ミラー + キャラ口調 TTS) ([plan](docs/plans/archive/claude-progress-voice.md))
+    - 構成: 各端末 `--mode client` が状態を push → 公開サーバ `--mode server` が集約 + ちょビ口調短文 (Haiku) + Gemini TTS → ブラウザでミラー表示 + 順次再生。pull→push へ設計転換し ai-monitor を 3 モード化 (local 不変)
+    - Phase 1: データソース抽象化 (`EntrySource`) / Gemini TTS→ブラウザ再生 PoC / redaction・保持方針確定 ([plan](docs/plans/archive/claude-progress-voice-phase1.md))
+    - Phase 2: サーバ認証 + Ingestion (`auth.ts` Bearer fail-fast・`store.ts` 集約 TTL・`ingest.ts` 検証/dedup/レート制限・CORS 限定) ([plan](docs/plans/archive/claude-progress-voice-phase2.md))
+    - Phase 3: ダッシュボードミラー配信 (`RemoteEntrySource`・`views.ts` 無改造再利用・SSE push 駆動化) ([plan](docs/plans/archive/claude-progress-voice-phase3.md))
+    - Phase 4: uplink クライアント (`--mode client`・既存検出再利用・送信前 redaction・リトライ/バッファ・allowlist・WSL2/Mac) ([plan](docs/plans/archive/claude-progress-voice-phase4.md))
+    - Phase 5: ペルソナ文生成 + TTS (`persona.ts`+`voice-persona.json`・`tts.ts` Gemini/Null/Caching・`voice-store.ts` 乱数id・`voice-pipeline.ts`・`/api/voice/audio/:id`) ([plan](docs/plans/archive/claude-progress-voice-phase5.md))
+    - Phase 6: Web UI 再生 + ミラー表示 (`renderDashboard(opts.voice)`・ボイスバー ON/OFF/音量/種別・端末フィルタ/履歴+再再生・SSE 順次再生・autoplay 解除) ([plan](docs/plans/archive/claude-progress-voice-phase6.md))
+    - Phase 7: デプロイ成果物 (`ai-monitor/deploy/g3plus/` Dockerfile/compose/.env.example/runbook + `.dockerignore`)。ローカル Docker 実ビルド + 起動/認証/healthcheck 検証済み ([plan](docs/plans/archive/claude-progress-voice-phase7.md))
+    - Phase 8: redaction/保持の確認 (コード変更なし)・CLAUDE.md/README をモード対応に更新・ローカル E2E (client→server ループバックでミラー成立)・整理 ([plan](docs/plans/archive/claude-progress-voice-phase8.md))
+    - テスト: `npm test` 136 pass / 0 fail。**実 g3plus デプロイ + Cloudflare Tunnel(`ccm.chobi.me`)/Access 構築はユーザー作業** (runbook = `ai-monitor/deploy/g3plus/README.md` 提供済み)。残: 永続化 opt-in / WAV→mp3 変換 / macOS process 検出 (`processes.ts` darwin スキャフォルド) は後追い
 - 2026-05-13: 要約に直近ユーザー入力を含める + 要約カードを折りたたみ/展開可能にする ([plan](docs/plans/archive/summary-context-and-collapsible.md))
     - Phase 1 (要約コンテキスト拡張): `server.ts` の要約用 `readTailEvents` 窓を 50 → 300 に、`Summarizer.getOrCompute` / `wait` に `SummarizeInput` 形式の引数を導入し `recentUserText` を渡せるように、`renderEventsForPrompt` を「ピン留め (直近ユーザー入力) + 直近」の 2 セクション構築に変更し `tool-use` / `tool-result` を除外
     - Phase 2 (折りたたみ UI): `.card-summary-text` の line-clamp を 3 → 6 に拡大し、`.card-summary.expanded` で clamp 解除、`renderSummaryFromData` の OK ブランチに `data-collapsible` / `data-summary-key` / `<button data-summary-toggle>` を出し、`DASHBOARD_SCRIPT` にトグルクリックハンドラ + 短い要約時のボタン非表示判定を追加、`DASHBOARD_LIVE_SCRIPT.updateCard` で `data-summary-key` 一致時のみ展開状態を復元
