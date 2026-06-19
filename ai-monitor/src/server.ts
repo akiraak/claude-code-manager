@@ -4,10 +4,14 @@ import { assertServerAuthConfigured, bearerAuth } from './auth';
 import { ensureAwaitingInputDir, watchAwaitingInputMarkers } from './awaiting-input';
 import { LocalEntrySource, type EntrySource } from './entry-source';
 import { Cooldown, createIngestRouter, RateLimiter } from './ingest';
+import { loadPersona, PersonaGenerator } from './persona';
 import { decodeId, type ActivityState, type MonitorEntry } from './state';
 import { AggregateStore } from './store';
 import { Summarizer } from './summarize';
 import { projectsDir } from './transcript';
+import { selectTtsProvider } from './tts';
+import { VoicePipeline } from './voice-pipeline';
+import { isValidUtteranceId, toUtteranceMeta, VoiceStore, type Utterance } from './voice-store';
 import { buildProcessViewData, entryToDashboardCardData, renderDashboard, renderNotFound, renderProcessView } from './views';
 
 type ServerMode = 'local' | 'client' | 'server';
@@ -91,6 +95,10 @@ export function startServer(opts: ServerOptions, source: EntrySource = new Local
   // (`fs.watch` は存在しないディレクトリを監視できないため)
   ensureAwaitingInputDir();
 
+  // utterance 生成完了で購読中の SSE クライアントに `voice-utterance` を push するためのリスナ集合。
+  // server モードのみ pipeline.onUtterance が発火させる (local/client では空のまま)。
+  const voiceListeners = new Set<(u: Utterance) => void>();
+
   // 要約が完了したタイミングで購読中の SSE クライアントに通知するためのリスナ集合
   const summaryListeners = new Set<() => void>();
   const summarizer = new Summarizer({
@@ -125,12 +133,67 @@ export function startServer(opts: ServerOptions, source: EntrySource = new Local
     const store = opts.store ?? new AggregateStore();
     const snapshotLimiter = new RateLimiter({ windowMs: 10_000, max: 30 });
     const voiceCooldown = new Cooldown({ ms: 15_000 });
+
+    // 音声パイプライン: voice-event → ペルソナ短文 (Haiku) → TTS (Gemini 既定) → utterance ストア。
+    // persona の声/スタイルを TTS に渡し、生成完了を voiceListeners (SSE) へ push する。
+    const persona = loadPersona();
+    const personaGen = new PersonaGenerator({ persona });
+    const tts = selectTtsProvider(process.env, persona);
+    const voiceStore = new VoiceStore();
+    const pipeline = new VoicePipeline({
+      persona: personaGen,
+      tts,
+      store: voiceStore,
+      onUtterance: (u) => {
+        for (const fn of voiceListeners) {
+          try { fn(u); } catch { /* リスナのエラーは握りつぶす */ }
+        }
+      },
+    });
+    console.log(
+      `[ai-monitor] voice: persona=${personaGen.isEnabled() ? 'haiku' : 'fallback'} (${persona.name}), ` +
+        `tts=${tts.isEnabled() ? tts.tag : 'none'}`,
+    );
+
     app.use(
       '/api/ingest',
       bearerAuth(tokens),
       express.json({ limit: '512kb' }),
-      createIngestRouter({ store, snapshotLimiter, voiceCooldown, onChange: notifyWatchers }),
+      createIngestRouter({
+        store,
+        snapshotLimiter,
+        voiceCooldown,
+        onChange: notifyWatchers,
+        // voice-event 到着で音声生成を起動 (best-effort・応答を待たせない)。
+        onVoiceEvent: (v) => { void pipeline.handle(v); },
+      }),
     );
+
+    // 合成済み音声バイトの配信。id は推測困難な capability (= app 層の「認証付き」)。
+    // 本番はさらに Cloudflare Access (email OTP) 配下に置く (Phase 7)。server モードのみマウント。
+    app.get('/api/voice/audio/:id', (req: Request, res: Response) => {
+      const id = String(req.params.id ?? '');
+      if (!isValidUtteranceId(id)) {
+        res.status(400).json({ error: 'invalid id' });
+        return;
+      }
+      const utt = voiceStore.get(id, Date.now());
+      if (!utt || !utt.audio) {
+        res.status(404).json({ error: 'not found' });
+        return;
+      }
+      res.setHeader('Content-Type', utt.audio.mime);
+      res.setHeader('Cache-Control', 'no-store');
+      res.setHeader('Content-Length', String(utt.audio.bytes.length));
+      res.end(utt.audio.bytes);
+    });
+
+    // 直近の発話メタ (bytes 抜き)。Phase 6 の履歴 UI 用。
+    app.get('/api/voice/recent.json', (_req: Request, res: Response) => {
+      noStore(res);
+      res.setHeader('Content-Type', 'application/json; charset=utf-8');
+      res.json({ utterances: voiceStore.recent(Date.now()) });
+    });
   }
 
   // Phase 1 で追加。ダッシュボード iframe を自己更新化するための軽量 JSON API。
@@ -341,6 +404,15 @@ export function startServer(opts: ServerOptions, source: EntrySource = new Local
     };
     summaryListeners.add(onSummaryUpdate);
 
+    // 新しい utterance ができたら meta (bytes 抜き) を push。ブラウザは id で /api/voice/audio/:id を取りに行く。
+    const onVoice = (u: Utterance): void => {
+      if (!alive) return;
+      try {
+        res.write(`event: voice-utterance\ndata: ${JSON.stringify(toUtteranceMeta(u))}\n\n`);
+      } catch { /* ignore */ }
+    };
+    voiceListeners.add(onVoice);
+
     // 変化検出で即時 tick を回す (ポーリングだけだと最大 2 秒のラグが出る)。
     // tick が走行中なら次の tick はリエントラントに走らないよう簡易ガード。
     let tickInflight = false;
@@ -377,6 +449,7 @@ export function startServer(opts: ServerOptions, source: EntrySource = new Local
       clearInterval(pollInterval);
       clearInterval(pingInterval);
       summaryListeners.delete(onSummaryUpdate);
+      voiceListeners.delete(onVoice);
       stopTrigger();
     });
   });

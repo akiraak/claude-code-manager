@@ -171,6 +171,12 @@ export interface IngestDeps {
    * snapshot は `changed:true` のときのみ、voice-event は記録後に毎回発火する。
    */
   onChange?: () => void;
+  /**
+   * voice-event 記録後に **検証済み payload** を渡して呼ばれる (Phase 5 の音声パイプライン起動用)。
+   * server.ts が `v => void pipeline.handle(v)` を渡す。非同期・best-effort で、ここでは await しない
+   * (ingest の応答を待たせない)。
+   */
+  onVoiceEvent?: (payload: VoiceEventPayload) => void;
 }
 
 /**
@@ -179,6 +185,7 @@ export interface IngestDeps {
 export function createIngestRouter(deps: IngestDeps): Router {
   const now = deps.now ?? (() => Date.now());
   const onChange = deps.onChange ?? (() => { /* noop */ });
+  const onVoiceEvent = deps.onVoiceEvent ?? (() => { /* noop */ });
   const router = Router();
 
   router.post('/snapshot', (req: Request, res: Response) => {
@@ -210,6 +217,8 @@ export function createIngestRouter(deps: IngestDeps): Router {
       return;
     }
     deps.store.recordVoiceEvent(v, now());
+    // 音声パイプライン (persona → TTS → utterance) を起動。応答は待たせない。
+    onVoiceEvent(v);
     onChange();
     res.json({ ok: true });
   });

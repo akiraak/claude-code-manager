@@ -27,7 +27,13 @@
     - [x] Step 3: `processes.ts` platform 分岐 + darwin スキャフォルド / `cli.ts` client 配線
     - [x] Step 4: `npm run build` + `npm test` 緑 / dryrun 実走ログ / プラン更新
     - 注: macOS の process 検出 (`ps`+`lsof`) は後追い。`processes.ts` の darwin はスキャフォルド (空配列)
-  - [ ] Phase 5: ペルソナ文生成 + TTS (Haikuでキャラ口調短文・TTS抽象化+キャッシュ・`/api/voice/audio/:id`認証付き)
+  - [x] Phase 5: ペルソナ文生成 + TTS (Haikuでキャラ口調短文・TTS抽象化+キャッシュ・`/api/voice/audio/:id`認証付き) [plan](docs/plans/claude-progress-voice-phase5.md)
+    - [x] Step 1: `persona.ts` + `voice-persona.json` (loadPersona・buildPersonaPrompt純関数・PersonaGenerator+fallback+キャッシュ) + test
+    - [x] Step 2: `tts.ts` (TtsProvider抽象・GeminiTtsProvider HTTP・CachingTtsProvider・NullTtsProvider・pcmToWav) + test
+    - [x] Step 3: `voice-store.ts` (utterance ストア・乱数id・TTL/件数上限) + test
+    - [x] Step 4: `voice-pipeline.ts` (event→persona→tts→store→onUtterance・throwしない) + test
+    - [x] Step 5: `ingest.ts`/`server.ts` 配線 (onVoiceEvent・SSE voice-utterance・`GET /api/voice/audio/:id` + recent.json・server限定)
+    - [x] Step 6: `npm run build` + `npm test` 緑 / server モード実走ログ (Gemini 実走込み)
   - [ ] Phase 6: Web UI 再生 + ミラー表示 (ログインUI・ON/OFF/音量/フィルタ/履歴・SSE順次再生)
   - [ ] Phase 7: デプロイ & 公開 (g3plus に Docker compose 追加・Cloudflare Tunnel `ccm.chobi.me`・Access ポリシー)
   - [ ] Phase 8: 仕上げ (redaction/保持調整・CLAUDE.md/README更新・E2E・TODO/DONE整理)
