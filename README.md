@@ -139,12 +139,12 @@ ANTHROPIC_API_KEY=sk-ant-...
 - **発話タイミング**: 完了 (Stop) / 承認待ち (Permission・Ask) / 長時間実行の途中経過。指示受信では発話しない。
 - **ボイス UI** (server モードのダッシュボードのみ): 🔊 ON/OFF (autoplay 解除兼)・音量・種別/端末フィルタ・履歴 + 再再生・SSE で受けて順次再生 (同時再生しない・古い発話はスキップ)。設定は localStorage 永続。
 - **主な環境変数**
-  - server: `CCM_CLIENT_TOKENS` (必須・端末別 Bearer。16 文字以上・カンマ区切り。未設定/短すぎは起動失敗) / `CCM_CORS_ORIGIN` / `ANTHROPIC_API_KEY` (ペルソナ短文。未設定は fallback テンプレ) / `GEMINI_API_KEY` (+`GEMINI_TTS_MODEL`) / `CCM_VOICE_TTS_PROVIDER` (`gemini`|`none`)
+  - server: `CCM_INGEST_TOKENS` (必須・端末別 Bearer。16 文字以上・カンマ区切り。各端末の `CCM_CLIENT_TOKEN` を全部列挙。未設定/短すぎは起動失敗。旧名 `CCM_CLIENT_TOKENS` も後方互換で可・非推奨) / `CCM_CORS_ORIGIN` / `ANTHROPIC_API_KEY` (ペルソナ短文。未設定は fallback テンプレ) / `GEMINI_API_KEY` (+`GEMINI_TTS_MODEL`) / `CCM_VOICE_TTS_PROVIDER` (`gemini`|`none`)
   - client: `CCM_SERVER_URL` / `CCM_CLIENT_TOKEN` / `CCM_CLIENT_LABEL` / `CCM_MIRROR_PROJECTS` (ミラー対象 allowlist) / `CCM_DRYRUN`
 
 ```bash
 # サーバ (公開アグリゲータ)
-CCM_CLIENT_TOKENS=tok_wsl2_xxxxxxxxxxxxxxxx ai-monitor --mode server --host 0.0.0.0 --port 8181
+CCM_INGEST_TOKENS=tok_wsl2_xxxxxxxxxxxxxxxx ai-monitor --mode server --host 0.0.0.0 --port 8181
 # 端末 (クライアント)
 CCM_SERVER_URL=https://ccm.chobi.me CCM_CLIENT_TOKEN=tok_wsl2_xxxxxxxxxxxxxxxx \
   CCM_MIRROR_PROJECTS=claude-code-manager ai-monitor --mode client
@@ -153,7 +153,7 @@ CCM_SERVER_URL=https://ccm.chobi.me CCM_CLIENT_TOKEN=tok_wsl2_xxxxxxxxxxxxxxxx \
 ローカルで動作検証する場合は、ビルド + 既存停止 + 起動をまとめた **起動スクリプト**を使う (server 8190 / client 8191・`run-ai-monitor.sh` の local 8181 と併存可)。
 
 ```bash
-# 端末A: サーバ (ミラー + 音声)。GEMINI_API_KEY/CCM_CLIENT_TOKENS は .env か env で
+# 端末A: サーバ (ミラー + 音声)。GEMINI_API_KEY/CCM_INGEST_TOKENS は .env か env で
 ./run-voice-server.sh      # → http://127.0.0.1:8190/view?item=dashboard を開く
 # 端末B: クライアント (この端末の状態を push)
 CCM_MIRROR_PROJECTS=claude-code-manager ./run-voice-client.sh

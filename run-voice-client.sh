@@ -12,7 +12,7 @@
 #     受け取り env/.env を参照しないため)。CCM_CLIENT_DASH_PORT / CCM_SERVER_PORT / SKIP_BUILD。
 #
 #   CCM_SERVER_URL        push 先 (既定 http://127.0.0.1:<CCM_SERVER_PORT|8190>)
-#   CCM_CLIENT_TOKEN      Bearer (server の CCM_CLIENT_TOKENS のいずれかと一致させる)
+#   CCM_CLIENT_TOKEN      Bearer (server の CCM_INGEST_TOKENS のいずれかと一致させる)
 #   CCM_CLIENT_LABEL      端末名 (既定 hostname。cli.ts が決定)
 #   CCM_MIRROR_PROJECTS   ミラー対象 allowlist (cwd basename / projectDir / cwd。未設定=全件)
 #   CCM_CLIENT_DASH_PORT  クライアント側ローカルダッシュボードのポート (既定 8191・.env 不可)
@@ -57,7 +57,7 @@ SERVER_URL_DISP="${SERVER_URL_DISP:-(未設定)}"
 if [ -z "${CCM_CLIENT_TOKEN:-}" ] && ! grep -qE '^CCM_CLIENT_TOKEN=.+' .env 2>/dev/null; then
   export CCM_CLIENT_TOKEN="localdevtoken1234567890"
   echo "[warn] CCM_CLIENT_TOKEN 未設定 → 開発用デフォルトを使用: $CCM_CLIENT_TOKEN" >&2
-  echo "[warn]   server の CCM_CLIENT_TOKENS にこの値が含まれている必要があります" >&2
+  echo "[warn]   server の CCM_INGEST_TOKENS にこの値が含まれている必要があります" >&2
 fi
 
 # --- ラベル / allowlist (cli.ts が env/.env から読む。スクリプトは表示のみ・上書きしない) ---

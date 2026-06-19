@@ -92,13 +92,20 @@ try {
 
   if (opts.mode === 'server') {
     // 端末別トークンを fail-fast 検証してから startServer に渡す (photorans 流儀)。
-    const clientTokens = parseClientTokens(process.env.CCM_CLIENT_TOKENS);
-    assertServerAuthConfigured(clientTokens);
+    // 正は CCM_INGEST_TOKENS。旧名 CCM_CLIENT_TOKENS はクライアントの CCM_CLIENT_TOKEN と
+    // 紛らわしいため非推奨だが、後方互換で読む (非推奨警告を出す)。
+    let ingestTokensRaw = process.env.CCM_INGEST_TOKENS;
+    if (ingestTokensRaw === undefined && process.env.CCM_CLIENT_TOKENS !== undefined) {
+      console.warn('[ai-monitor] CCM_CLIENT_TOKENS は非推奨です。CCM_INGEST_TOKENS へ移行してください (今回は旧名で起動)');
+      ingestTokensRaw = process.env.CCM_CLIENT_TOKENS;
+    }
+    const ingestTokens = parseClientTokens(ingestTokensRaw);
+    assertServerAuthConfigured(ingestTokens);
     const corsOrigins = parseClientTokens(process.env.CCM_CORS_ORIGIN);
-    console.log(`[ai-monitor] mode: server (ingest tokens: ${clientTokens.length}, CORS origins: ${corsOrigins.length})`);
+    console.log(`[ai-monitor] mode: server (ingest tokens: ${ingestTokens.length}, CORS origins: ${corsOrigins.length})`);
     // 集約ストアを生成し、ingest (opts.store) と描画 (RemoteEntrySource) で同一インスタンスを共有する。
     const store = new AggregateStore();
-    startServer({ ...opts, clientTokens, corsOrigins, store }, new RemoteEntrySource(store));
+    startServer({ ...opts, clientTokens: ingestTokens, corsOrigins, store }, new RemoteEntrySource(store));
   } else if (opts.mode === 'client') {
     // client: ローカルダッシュボード (loopback・local と同挙動) に加えて公開サーバへ uplink push。
     // 送信設定の検証 (fail-fast) は startServer より先に行い、不正なら exit 1 させる。

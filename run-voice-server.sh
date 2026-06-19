@@ -4,7 +4,7 @@
 #
 # 設定の優先順位:
 #   node (cli.ts) が読む設定 … env > リポ直下 .env > 既定。
-#     CCM_CLIENT_TOKENS / CCM_CORS_ORIGIN / ANTHROPIC_API_KEY / GEMINI_API_KEY /
+#     CCM_INGEST_TOKENS / CCM_CORS_ORIGIN / ANTHROPIC_API_KEY / GEMINI_API_KEY /
 #     GEMINI_TTS_MODEL / CCM_VOICE_TTS_PROVIDER。スクリプトは値を上書きせず、env にも
 #     .env にも無いときだけトークンの開発用デフォルトを注入する。
 #   スクリプト固有の設定 … env > 既定 のみ (.env は読まない。cli.ts は --port/--host
@@ -12,7 +12,8 @@
 #
 #   CCM_SERVER_PORT   待受ポート (既定 8190・.env 不可)
 #   CCM_SERVER_HOST   待受ホスト (既定 127.0.0.1。LAN/Tunnel 公開なら 0.0.0.0・.env 不可)
-#   CCM_CLIENT_TOKENS ingest 用 Bearer (必須・カンマ区切り)。env/.env 無しなら開発用デフォルト
+#   CCM_INGEST_TOKENS ingest 用 Bearer (必須・カンマ区切り)。env/.env 無しなら開発用デフォルト
+#                     (旧名 CCM_CLIENT_TOKENS も後方互換で可・非推奨)
 #   GEMINI_API_KEY    Gemini TTS キー (未設定なら音は出ずテキストのみ)
 #   ANTHROPIC_API_KEY ペルソナ短文用 (未設定なら定型文フォールバック)
 #   CCM_VOICE_TTS_PROVIDER  gemini(既定) | none
@@ -43,9 +44,13 @@ fi
 # --- 必須: ingest トークン (env > .env > 開発用デフォルト) ---
 # env にも .env にも無いときだけ開発用デフォルトを export する
 # (.env にある場合は export せず dotenv に委ねる)。
-if [ -z "${CCM_CLIENT_TOKENS:-}" ] && ! grep -qE '^CCM_CLIENT_TOKENS=.+' .env 2>/dev/null; then
-  export CCM_CLIENT_TOKENS="localdevtoken1234567890"
-  echo "[warn] CCM_CLIENT_TOKENS 未設定 → 開発用デフォルトを使用 (本番不可): $CCM_CLIENT_TOKENS" >&2
+# server が読むのは CCM_INGEST_TOKENS (旧 CCM_CLIENT_TOKENS も cli.ts が後方互換で読む)。
+# env にも .env にも どちらの名前も無いときだけ開発用デフォルトを入れる。
+if [ -z "${CCM_INGEST_TOKENS:-}" ] && [ -z "${CCM_CLIENT_TOKENS:-}" ] \
+   && ! grep -qE '^CCM_INGEST_TOKENS=.+' .env 2>/dev/null \
+   && ! grep -qE '^CCM_CLIENT_TOKENS=.+' .env 2>/dev/null; then
+  export CCM_INGEST_TOKENS="localdevtoken1234567890"
+  echo "[warn] CCM_INGEST_TOKENS 未設定 → 開発用デフォルトを使用 (本番不可): $CCM_INGEST_TOKENS" >&2
   echo "[warn]   本番トークン生成: openssl rand -base64 32 | tr -d '+/=' | head -c 32" >&2
 fi
 

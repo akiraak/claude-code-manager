@@ -21,7 +21,7 @@ test('parseClientTokens はカンマ区切りを trim + 空要素除去する', 
 });
 
 test('assertServerAuthConfigured: 0 個は起動拒否', () => {
-  assert.throws(() => assertServerAuthConfigured([]), /CCM_CLIENT_TOKENS/);
+  assert.throws(() => assertServerAuthConfigured([]), /CCM_INGEST_TOKENS/);
 });
 
 test('assertServerAuthConfigured: 短すぎるトークンは起動拒否', () => {

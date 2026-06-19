@@ -4,7 +4,8 @@ import type { NextFunction, Request, Response } from 'express';
 /**
  * `--mode server` の Ingestion API (`/api/ingest/*`) を保護する端末別 Bearer 認証。
  *
- * - トークンは `.env` の `CCM_CLIENT_TOKENS` にカンマ区切りで置く (端末ごとに 1 本)。
+ * - トークンは `.env` の `CCM_INGEST_TOKENS` にカンマ区切りで置く (端末ごとに 1 本)。
+ *   (旧名 `CCM_CLIENT_TOKENS` も cli.ts が後方互換で読むが非推奨。クライアントの `CCM_CLIENT_TOKEN` と紛らわしいため改名。)
  * - 生成は `openssl rand -base64 32` 想定 (>= 16 文字を必須にして弱いトークンを弾く)。
  * - UI/閲覧系の認証は Cloudflare Access (email OTP) をインフラ層 (Phase 7) で掛ける方針なので、
  *   本モジュールは **マシン送信のための Bearer 検証のみ** を担う。
@@ -15,7 +16,7 @@ import type { NextFunction, Request, Response } from 'express';
 /** トークンに要求する最小長 (これ未満が混じると fail-fast)。 */
 export const MIN_TOKEN_LENGTH = 16;
 
-/** `CCM_CLIENT_TOKENS` をカンマ区切りでパースし、trim + 空要素除去した配列を返す。 */
+/** カンマ区切り文字列をパースし、trim + 空要素除去した配列を返す (ingest トークン / CORS オリジン共用)。 */
 export function parseClientTokens(raw: string | undefined): string[] {
   if (!raw) return [];
   return raw
@@ -32,14 +33,14 @@ export function parseClientTokens(raw: string | undefined): string[] {
 export function assertServerAuthConfigured(tokens: readonly string[]): void {
   if (tokens.length === 0) {
     throw new Error(
-      'server モードには CCM_CLIENT_TOKENS が必要です (カンマ区切りの端末別トークン)。' +
+      'server モードには CCM_INGEST_TOKENS が必要です (カンマ区切りの端末別トークン)。' +
         ' 生成例: openssl rand -base64 32',
     );
   }
   const short = tokens.filter(t => t.length < MIN_TOKEN_LENGTH);
   if (short.length > 0) {
     throw new Error(
-      `CCM_CLIENT_TOKENS に短すぎるトークンがあります (>= ${MIN_TOKEN_LENGTH} 文字必須)。`,
+      `CCM_INGEST_TOKENS に短すぎるトークンがあります (>= ${MIN_TOKEN_LENGTH} 文字必須)。`,
     );
   }
 }

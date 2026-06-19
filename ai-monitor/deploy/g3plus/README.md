@@ -14,7 +14,7 @@
 端末(WSL2/Mac) ai-monitor --mode client
   └─ Bearer push ─▶ Cloudflare Tunnel (TLS, ccm.chobi.me)
                       └─▶ g3plus: docker ai-monitor :8181 (--mode server)
-                            ├─ /api/ingest/*  端末別 Bearer (CCM_CLIENT_TOKENS)
+                            ├─ /api/ingest/*  端末別 Bearer (CCM_INGEST_TOKENS)
                             ├─ 集約ストア → ミラー描画 + 音声生成 (Haiku→Gemini TTS)
                             └─ /view, /api/voice/*, /api/watch(SSE)
   ブラウザ ◀── Cloudflare Access (email OTP) ── UI / 音声再生
@@ -69,13 +69,13 @@ cd /home/ubuntu/g3plus-ops/ai-monitor
 cp .env.example .env
 
 # 端末ごとに ingest トークンを生成（16 文字以上の URL-safe）
-openssl rand -base64 32 | tr -d '+/=' | head -c 32 ; echo   # → CCM_CLIENT_TOKENS に追記
-# CCM_CLIENT_TOKENS=tok_wsl2_xxxx,tok_mac_yyyy のようにカンマ区切りで複数
+openssl rand -base64 32 | tr -d '+/=' | head -c 32 ; echo   # → CCM_INGEST_TOKENS に追記
+# CCM_INGEST_TOKENS=tok_wsl2_xxxx,tok_mac_yyyy のようにカンマ区切りで複数
 # ANTHROPIC_API_KEY / GEMINI_API_KEY も .env に設定（音声を出すなら必須級）
 nano .env
 ```
 
-`CCM_CLIENT_TOKENS` 未設定 / 16 文字未満が混じると **起動が exit 1**（fail-fast）。
+`CCM_INGEST_TOKENS` 未設定 / 16 文字未満が混じると **起動が exit 1**（fail-fast）。
 
 ### 4. ビルド & 起動
 
@@ -115,7 +115,7 @@ Zero Trust → Access → Applications で `ccm.chobi.me` をカバーする。
   → **Allow / email OTP**（自分の email のみ許可）。
 - **ingest だけ Bypass**: パス `/api/ingest/*`（または `/api/ingest`）に **Bypass（Everyone）** の Include を、
   UI ポリシーより**優先順位を上**にして追加。理由: 端末はマシン送信で OTP を踏めない。
-  ingest は **アプリの Bearer（`CCM_CLIENT_TOKENS`）が本当の gate** なので Bypass で安全。
+  ingest は **アプリの Bearer（`CCM_INGEST_TOKENS`）が本当の gate** なので Bypass で安全。
 
 > Access を分けるのが難しい場合は、`ccm-ingest.chobi.me`（Bypass）と `ccm.chobi.me`（OTP）の
 > 2 ホスト名に分割し、どちらも `http://ai-monitor:8181` に向ける方式でもよい。その場合クライアントの
@@ -127,7 +127,7 @@ Zero Trust → Access → Applications で `ccm.chobi.me` をカバーする。
 
 ```bash
 export CCM_SERVER_URL=https://ccm.chobi.me     # ingest を Bypass で分けたならそのホスト
-export CCM_CLIENT_TOKEN=tok_wsl2_xxxx          # サーバ .env の CCM_CLIENT_TOKENS の 1 つと一致
+export CCM_CLIENT_TOKEN=tok_wsl2_xxxx          # サーバ .env の CCM_INGEST_TOKENS の 1 つと一致
 export CCM_CLIENT_LABEL=wsl2-main              # 省略時は hostname
 export CCM_MIRROR_PROJECTS=claude-code-manager,my-proj   # ★ミラー対象 allowlist（プライバシー）
 # 動作確認だけなら送信せずログのみ:
@@ -143,7 +143,7 @@ ai-monitor --mode client
 ```bash
 # 1) ingest が通る（Bypass + Bearer）
 curl -s -X POST https://ccm.chobi.me/api/ingest/voice-event \
-  -H "Authorization: Bearer <CCM_CLIENT_TOKENS の1つ>" -H "Content-Type: application/json" \
+  -H "Authorization: Bearer <CCM_INGEST_TOKENS の1つ>" -H "Content-Type: application/json" \
   -d '{"clientId":"smoke","projectDir":"-x","projectName":"smoke","kind":"completed"}'
 # → {"ok":true}
 
@@ -184,7 +184,7 @@ ssh -i ~/.ssh/id_rsa_nopass ubuntu@g3plus.lan \
 ```bash
 # 1) 新トークン生成
 openssl rand -base64 32 | tr -d '+/=' | head -c 32 ; echo
-# 2) サーバ .env の CCM_CLIENT_TOKENS を差し替え（移行期間は新旧併記でカンマ区切り可）
+# 2) サーバ .env の CCM_INGEST_TOKENS を差し替え（移行期間は新旧併記でカンマ区切り可）
 # 3) docker compose up -d で再注入（env_file 読み直し）
 # 4) 各端末の CCM_CLIENT_TOKEN を新値に更新
 # 5) 移行完了後、旧トークンを .env から削除して再 up -d
