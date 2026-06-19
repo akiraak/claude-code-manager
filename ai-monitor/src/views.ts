@@ -291,6 +291,73 @@ a { color: #1565c0; text-decoration: none; }
 a:hover { text-decoration: underline; }
 `;
 
+// Phase 6: server モードのダッシュボードにだけ載せるボイスコントロール UI の CSS。
+// local/client モードでは renderDashboard が voice パネルを出さないので注入もしない。
+const VOICE_STYLE = `
+.voice-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 12px;
+  margin-bottom: 12px;
+  background: #fff;
+  border: 1px solid #e5e5e5;
+  border-radius: 8px;
+  font-size: 12px;
+}
+.voice-toggle {
+  font: inherit;
+  font-weight: 600;
+  padding: 4px 12px;
+  border-radius: 6px;
+  border: 1px solid #c5dafd;
+  background: #f1f7ff;
+  color: #1565c0;
+  cursor: pointer;
+}
+.voice-toggle[aria-pressed="true"] { background: #1565c0; color: #fff; border-color: #1565c0; }
+.voice-vol { display: inline-flex; align-items: center; gap: 6px; color: #555; }
+.voice-vol input[type="range"] { width: 90px; }
+.voice-filters, .voice-client { display: inline-flex; align-items: center; gap: 8px; color: #555; }
+.voice-filters label { display: inline-flex; align-items: center; gap: 3px; cursor: pointer; }
+.voice-client select { font: inherit; font-size: 12px; }
+.voice-sep { width: 1px; align-self: stretch; background: #eee; }
+.voice-history-toggle { font: inherit; font-size: 12px; color: #1565c0; background: none; border: none; cursor: pointer; }
+.voice-now {
+  color: #1b6e3a;
+  font-size: 11px;
+  flex: 1 1 120px;
+  min-width: 0;
+  text-align: right;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.voice-now:empty::before { content: "—"; color: #ccc; }
+.voice-history {
+  margin-bottom: 12px;
+  background: #fff;
+  border: 1px solid #e5e5e5;
+  border-radius: 8px;
+  padding: 4px 0;
+  max-height: 260px;
+  overflow-y: auto;
+}
+.voice-history-empty { color: #999; padding: 10px 12px; }
+.vh-row { display: flex; align-items: baseline; gap: 8px; padding: 5px 12px; border-bottom: 1px solid #f3f3f3; }
+.vh-row:last-child { border-bottom: none; }
+.vh-time { color: #999; font-size: 11px; font-variant-numeric: tabular-nums; flex: 0 0 auto; }
+.vh-kind { flex: 0 0 auto; font-size: 10px; font-weight: 600; padding: 1px 6px; border-radius: 3px; }
+.vh-kind-completed { background: #d4edda; color: #1b6e3a; }
+.vh-kind-awaiting  { background: #ffe0b2; color: #bf360c; }
+.vh-kind-progress  { background: #e3f2fd; color: #1565c0; }
+.vh-proj { flex: 0 0 auto; color: #888; font-size: 11px; }
+.vh-text { flex: 1 1 auto; min-width: 0; word-break: break-word; }
+.vh-play { flex: 0 0 auto; font: inherit; font-size: 11px; color: #1565c0; background: none; border: none; cursor: pointer; }
+.vh-play:hover { text-decoration: underline; }
+`;
+
 /** カード本文のプレビュー文字列を生成する。trim と末尾 … 付け。 */
 function previewText(s: string | undefined, maxChars = 240): string {
   if (!s) return '';
@@ -931,8 +998,259 @@ const DASHBOARD_LIVE_SCRIPT = `
 })();
 `;
 
-export function renderDashboard(entries: MonitorEntry[]): string {
+// Phase 6: server モードのダッシュボードに載せるボイスバー。
+// 種別チェックボックスの初期 checked は SSR では全 ON にしておき、JS 起動時に
+// localStorage の保存値で上書きする (JS なしでも崩れない素の HTML)。
+function renderVoiceBar(): string {
+  return `<div class="voice-bar" data-voice-bar>
+    <button type="button" class="voice-toggle" data-voice-toggle aria-pressed="false">🔇 音声 OFF</button>
+    <label class="voice-vol">音量 <input type="range" min="0" max="100" value="80" data-voice-volume></label>
+    <span class="voice-sep"></span>
+    <span class="voice-filters" data-voice-kinds>
+      <label><input type="checkbox" data-voice-kind="completed" checked> 完了</label>
+      <label><input type="checkbox" data-voice-kind="awaiting" checked> 承認待ち</label>
+      <label><input type="checkbox" data-voice-kind="progress" checked> 途中経過</label>
+    </span>
+    <label class="voice-client">端末 <select data-voice-client><option value="">すべて</option></select></label>
+    <button type="button" class="voice-history-toggle" data-voice-history-toggle>履歴 ▾</button>
+    <span class="voice-now" data-voice-now title="再生中の発話"></span>
+  </div>
+  <div class="voice-history" data-voice-history hidden></div>`;
+}
+
+// Phase 6: ボイス再生 + フィルタ + 履歴のクライアント JS (server モードのみ注入)。
+//
+// - 専用の EventSource('/api/watch') を張り `voice-utterance` を購読する。
+//   既存 DASHBOARD_LIVE_SCRIPT の EventSource とは独立 (再接続時のリスナ喪失を避ける)。
+// - 単一 HTMLAudioElement + キューで「順次再生」。同時再生しない・古すぎる発話は捨てる。
+// - 🔊 トグル ON のクリックが autoplay 解除のユーザージェスチャを兼ねる。
+// - 設定 (ON/OFF・音量・種別・端末) は localStorage に永続。
+// - 履歴は起動時に /api/voice/recent.json で初期化し、以降 SSE で先頭に積む。
+//   履歴の「再生」ボタンは明示操作なので OFF でも鳴らし、現在再生を止めて即再生する。
+const DASHBOARD_VOICE_SCRIPT = `
+(function() {
+  var KINDS = ['completed', 'awaiting', 'progress'];
+  var KIND_LABEL = { completed: '完了', awaiting: '承認待ち', progress: '途中経過' };
+  var MAX_AGE_MS = 60000;   // これより古い発話は再生キューから捨てる (溜まった分を一気に喋らない)
+  var MAX_HISTORY = 50;
+
+  var bar = document.querySelector('[data-voice-bar]');
+  if (!bar) return;
+  var toggleBtn = document.querySelector('[data-voice-toggle]');
+  var volEl = document.querySelector('[data-voice-volume]');
+  var clientSel = document.querySelector('[data-voice-client]');
+  var histToggle = document.querySelector('[data-voice-history-toggle]');
+  var histEl = document.querySelector('[data-voice-history]');
+  var nowEl = document.querySelector('[data-voice-now]');
+  var kindBoxes = document.querySelectorAll('[data-voice-kind]');
+
+  function lsGet(k, d) { try { var v = localStorage.getItem(k); return v == null ? d : v; } catch (e) { return d; } }
+  function lsSet(k, v) { try { localStorage.setItem(k, v); } catch (e) { /* ignore */ } }
+  function esc(s) {
+    if (s == null) return '';
+    return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+  }
+
+  // --- 設定の復元 ---
+  var enabled = lsGet('ccm-voice-enabled', '0') === '1';
+  var volume = (function() { var n = parseInt(lsGet('ccm-voice-volume', '80'), 10); return isNaN(n) ? 80 : Math.max(0, Math.min(100, n)); })();
+  var kinds = (function() {
+    try { var a = JSON.parse(lsGet('ccm-voice-kinds', '')); if (Array.isArray(a)) return a; } catch (e) { /* ignore */ }
+    return KINDS.slice();
+  })();
+  var clientFilter = lsGet('ccm-voice-client', '');
+
+  // --- 状態 ---
+  var queue = [];
+  var playing = false;
+  var seenClients = {};
+  var history = [];
+  var audio = new Audio();
+  audio.preload = 'auto';
+
+  function applyToggleUI() {
+    toggleBtn.setAttribute('aria-pressed', enabled ? 'true' : 'false');
+    toggleBtn.textContent = enabled ? '🔊 音声 ON' : '🔇 音声 OFF';
+  }
+  function applyVolume() { audio.volume = volume / 100; }
+  function kindOn(k) { return kinds.indexOf(k) !== -1; }
+  function setNow(text) { if (nowEl) nowEl.textContent = text || ''; }
+  function passes(meta) {
+    if (!kindOn(meta.kind)) return false;
+    if (clientFilter && meta.clientId !== clientFilter) return false;
+    return true;
+  }
+
+  function ensureClientOption(id) {
+    if (!id || seenClients[id]) return;
+    seenClients[id] = true;
+    var opt = document.createElement('option');
+    opt.value = id;
+    opt.textContent = id;
+    clientSel.appendChild(opt);
+    if (id === clientFilter) clientSel.value = id;
+  }
+
+  // --- 再生 (単一 audio + キュー) ---
+  function enqueue(meta) {
+    if (!enabled || !meta.hasAudio || !passes(meta)) return;
+    queue.push(meta);
+    pump();
+  }
+  function pump() {
+    if (playing) return;
+    var now = Date.now();
+    while (queue.length) {
+      var meta = queue.shift();
+      if (now - meta.createdAtMs > MAX_AGE_MS) continue;   // 古すぎる
+      if (!enabled || !passes(meta)) continue;             // 再生直前にも再チェック
+      play(meta);
+      return;
+    }
+  }
+  function play(meta) {
+    playing = true;
+    setNow((meta.projectName ? meta.projectName + ': ' : '') + (meta.text || ''));
+    applyVolume();
+    var finished = false;
+    function done() {
+      if (finished) return;
+      finished = true;
+      audio.onended = null;
+      audio.onerror = null;
+      playing = false;
+      setNow('');
+      pump();
+    }
+    audio.onended = done;
+    audio.onerror = done;   // 404 / 期限切れは黙って次へ
+    audio.src = '/api/voice/audio/' + encodeURIComponent(meta.id);
+    var p = audio.play();
+    if (p && p.catch) p.catch(function() { done(); });   // autoplay ブロック等
+  }
+  function playNow(meta) {
+    // 現在再生を止めて即再生 (履歴の「再生」= 明示操作なので OFF でも鳴らす)。
+    try { audio.pause(); } catch (e) { /* ignore */ }
+    audio.onended = null;
+    audio.onerror = null;
+    playing = false;
+    play(meta);
+  }
+
+  // --- 履歴 ---
+  function fmtTime(ms) {
+    try { return new Date(ms).toLocaleTimeString('ja-JP', { hour12: false }); } catch (e) { return ''; }
+  }
+  function renderHistory() {
+    if (!history.length) { histEl.innerHTML = '<div class="voice-history-empty">まだ発話はありません。</div>'; return; }
+    var html = '';
+    for (var i = 0; i < history.length; i++) {
+      var m = history[i];
+      html += '<div class="vh-row">'
+        + '<span class="vh-time">' + esc(fmtTime(m.createdAtMs)) + '</span>'
+        + '<span class="vh-kind vh-kind-' + esc(m.kind) + '">' + esc(KIND_LABEL[m.kind] || m.kind) + '</span>'
+        + (m.projectName ? '<span class="vh-proj">' + esc(m.projectName) + '</span>' : '')
+        + '<span class="vh-text">' + esc(m.text) + '</span>'
+        + (m.hasAudio ? '<button type="button" class="vh-play" data-vh-id="' + esc(m.id) + '">再生</button>' : '')
+        + '</div>';
+    }
+    histEl.innerHTML = html;
+  }
+  function addHistory(meta) {
+    history.unshift(meta);
+    if (history.length > MAX_HISTORY) history.length = MAX_HISTORY;
+    if (!histEl.hidden) renderHistory();
+  }
+
+  function onUtterance(meta) {
+    if (!meta || !meta.id) return;
+    ensureClientOption(meta.clientId);
+    addHistory(meta);
+    enqueue(meta);
+  }
+
+  // --- イベント結線 ---
+  toggleBtn.addEventListener('click', function() {
+    enabled = !enabled;
+    lsSet('ccm-voice-enabled', enabled ? '1' : '0');
+    applyToggleUI();
+    if (enabled) {
+      pump();   // ユーザージェスチャ。溜まっていれば再生開始 (autoplay 解除も兼ねる)
+    } else {
+      queue.length = 0;
+      try { audio.pause(); } catch (e) { /* ignore */ }
+      audio.onended = null;
+      audio.onerror = null;
+      playing = false;
+      setNow('');
+    }
+  });
+  volEl.addEventListener('input', function() {
+    var n = parseInt(volEl.value, 10);
+    volume = isNaN(n) ? volume : Math.max(0, Math.min(100, n));
+    lsSet('ccm-voice-volume', String(volume));
+    applyVolume();
+  });
+  for (var i = 0; i < kindBoxes.length; i++) {
+    kindBoxes[i].addEventListener('change', function() {
+      var next = [];
+      for (var j = 0; j < kindBoxes.length; j++) {
+        if (kindBoxes[j].checked) next.push(kindBoxes[j].getAttribute('data-voice-kind'));
+      }
+      kinds = next;
+      lsSet('ccm-voice-kinds', JSON.stringify(kinds));
+    });
+  }
+  clientSel.addEventListener('change', function() {
+    clientFilter = clientSel.value || '';
+    lsSet('ccm-voice-client', clientFilter);
+  });
+  histToggle.addEventListener('click', function() {
+    histEl.hidden = !histEl.hidden;
+    histToggle.textContent = histEl.hidden ? '履歴 ▾' : '履歴 ▴';
+    if (!histEl.hidden) renderHistory();
+  });
+  histEl.addEventListener('click', function(ev) {
+    var btn = ev.target && ev.target.closest ? ev.target.closest('[data-vh-id]') : null;
+    if (!btn) return;
+    var id = btn.getAttribute('data-vh-id');
+    for (var k = 0; k < history.length; k++) {
+      if (history[k].id === id) { playNow(history[k]); return; }
+    }
+  });
+
+  // --- 初期 UI 反映 ---
+  applyToggleUI();
+  volEl.value = String(volume);
+  applyVolume();
+  for (var b = 0; b < kindBoxes.length; b++) {
+    kindBoxes[b].checked = kindOn(kindBoxes[b].getAttribute('data-voice-kind'));
+  }
+
+  // --- 履歴の初期ロード (recent.json。古いものは再生せず履歴/端末候補のみ) ---
+  fetch('/api/voice/recent.json', { cache: 'no-store' })
+    .then(function(r) { return r.json(); })
+    .then(function(payload) {
+      var arr = (payload && payload.utterances) || [];
+      for (var i = arr.length - 1; i >= 0; i--) ensureClientOption(arr[i].clientId);
+      history = arr.slice(0, MAX_HISTORY);
+      if (!histEl.hidden) renderHistory();
+    })
+    .catch(function() { /* 履歴は無くても良い */ });
+
+  // --- SSE (voice 専用の独立 EventSource。再接続はネイティブ任せ) ---
+  var es = new EventSource('/api/watch');
+  es.addEventListener('voice-utterance', function(ev) {
+    var meta = null;
+    try { meta = JSON.parse(ev.data); } catch (e) { return; }
+    onUtterance(meta);
+  });
+})();
+`;
+
+export function renderDashboard(entries: MonitorEntry[], opts: { voice?: boolean } = {}): string {
   const now = new Date().toISOString();
+  const voice = opts.voice ?? false;
   // 起動中 / 停止 の 2 セクションに分割する。state === 'stopped' のみ停止セクション。
   // JS が動かない環境でも初回は HTML だけで両セクションが見える。
   const running = entries.filter(e => e.state !== 'stopped');
@@ -944,10 +1262,11 @@ export function renderDashboard(entries: MonitorEntry[]): string {
   const stoppedHidden = stopped.length === 0;
   return `<!doctype html>
 <html><head><meta charset="utf-8"><title>AI Monitor Dashboard</title>
-<style>${COMMON_STYLE}</style></head>
+<style>${COMMON_STYLE}${voice ? VOICE_STYLE : ''}</style></head>
 <body>
   <h1>Dashboard</h1>
   <div class="meta" data-dashboard-meta>表示中 CLI: ${entries.length} 件 · 取得時刻: ${escapeHtml(now)}</div>
+  ${voice ? renderVoiceBar() : ''}
   <h2 class="section-title" data-section="running"${runningHidden ? ' hidden' : ''}>起動中 <span data-count>${running.length}</span></h2>
   <div class="cards" data-cards-running${runningHidden ? ' hidden' : ''}>${runningHtml}</div>
   <h2 class="section-title" data-section="stopped"${stoppedHidden ? ' hidden' : ''}>停止 <span data-count>${stopped.length}</span></h2>
@@ -955,6 +1274,7 @@ export function renderDashboard(entries: MonitorEntry[]): string {
   <div class="empty" data-empty${isEmpty ? '' : ' hidden'}>稼働中の Claude Code CLI が見つかりません。</div>
   <script>${DASHBOARD_SCRIPT}</script>
   <script>${DASHBOARD_LIVE_SCRIPT}</script>
+  ${voice ? `<script>${DASHBOARD_VOICE_SCRIPT}</script>` : ''}
 </body></html>`;
 }
 

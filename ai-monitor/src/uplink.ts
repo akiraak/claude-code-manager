@@ -226,6 +226,11 @@ export interface VoiceSessionInput {
   lastUserText?: string;
   /** 承認待ち/完了/途中経過の発話の素 (redaction 済み)。 */
   lastAssistantText?: string;
+  /**
+   * 最後の assistant メッセージの timestamp。**ターンの識別子**として dedup に使う
+   * (揺れ=同一 timestamp / 別ターン=新 timestamp)。送信はしない (client 内 dedup 専用)。
+   */
+  lastAssistantAt?: string;
 }
 
 export interface VoiceEventOut {
@@ -243,6 +248,32 @@ interface DetectorSessionState {
   aiSinceMs?: number;
   /** 最後に progress を出した時刻。 */
   lastProgressMs?: number;
+  /**
+   * 直近に emit した「読み上げ対象の遷移イベント」(completed / awaiting) の署名
+   * `kind|lastAssistantAt|detail`。**同一ターンの再発火だけ**を抑制するために使う。
+   *
+   * ターン完了直後は jsonl mtime が新しく classifyV2 が一時的に ai-processing と判定するため
+   * `waiting→ai-processing→waiting` と揺れて、同じ assistant メッセージのまま completed が
+   * 二重発火しうる。署名にターン識別子 `lastAssistantAt` を含めることで:
+   *  - 揺れ (新しい assistant メッセージ無し) = 同一 timestamp → 同一署名 → 抑制
+   *  - 別ターンの正規完了 = 新しい timestamp → 別署名 → **同じ短文・短時間でも発話**
+   * これにより時間窓に頼らず「正規のフォローアップ完了を落とさない」を保証する。
+   * 間に挟まる started は読み上げ対象でないので署名を更新しない (started を跨いでも抑制が効く)。
+   * progress は周期通知なので対象外。
+   */
+  lastSpokenSig?: string;
+}
+
+/**
+ * completed / awaiting の重複抑制キー。`lastAssistantAt` (= ターン識別子) を含めることで、
+ * 同一ターンの揺れだけを抑制し、別ターンの同一テキストは別署名になり発話される。
+ * ターン識別子が取れないとき (lastAssistantAt 未設定) は **抑制しない** (null) — 正規イベントを
+ * 落とすより重複を許容する方が安全。
+ */
+function spokenTransitionSig(ev: VoiceEventOut, s: VoiceSessionInput): string | null {
+  if (ev.kind !== 'completed' && ev.kind !== 'awaiting') return null;
+  if (!s.lastAssistantAt) return null;
+  return `${ev.kind}|${s.lastAssistantAt}|${ev.detail ?? ''}`;
 }
 
 /**
@@ -283,11 +314,23 @@ export class VoiceEventDetector {
 
       if (s.state !== prev.state) {
         const ev = transitionEvent(prev.state, s);
-        if (ev) out.push(ev);
+        let lastSpokenSig = prev.lastSpokenSig;
+        if (ev) {
+          const sig = spokenTransitionSig(ev, s);
+          if (sig !== null && sig === prev.lastSpokenSig) {
+            // 同一ターンの再発火 (lastAssistantAt 不変) → 発話イベントを出さない。
+            // 別ターンなら lastAssistantAt が変わり署名が変わるので、ここでは抑制されない。
+            // (状態遷移自体は下で記録するので state machine は壊さない)。
+          } else {
+            out.push(ev);
+            if (sig !== null) lastSpokenSig = sig;
+          }
+        }
         this.states.set(s.projectDir, {
           state: s.state,
           aiSinceMs: s.state === 'ai-processing' ? nowMs : undefined,
           lastProgressMs: undefined,
+          lastSpokenSig,
         });
         continue;
       }
@@ -307,9 +350,10 @@ export class VoiceEventDetector {
             detail: s.lastAssistantText,
             state: s.state,
           });
-          this.states.set(s.projectDir, { state: s.state, aiSinceMs: since, lastProgressMs: nowMs });
+          // progress は周期通知なので lastSpokenSig は更新しない (completed/awaiting の重複判定に影響させない)。
+          this.states.set(s.projectDir, { state: s.state, aiSinceMs: since, lastProgressMs: nowMs, lastSpokenSig: prev.lastSpokenSig });
         } else {
-          this.states.set(s.projectDir, { state: s.state, aiSinceMs: since, lastProgressMs: prev.lastProgressMs });
+          this.states.set(s.projectDir, { state: s.state, aiSinceMs: since, lastProgressMs: prev.lastProgressMs, lastSpokenSig: prev.lastSpokenSig });
         }
       }
       // 非 ai-processing で state 不変なら prev のまま (何もしない)。
@@ -620,6 +664,9 @@ export function createUplinkRunner(config: ClientConfig, deps: UplinkRunnerDeps 
         lastAssistantText: e.tail?.lastAssistantText
           ? sanitizeText(e.tail.lastAssistantText, VOICE_DETAIL_MAX)
           : undefined,
+        // dedup 用のターン識別子 (最後の assistant メッセージの timestamp)。
+        // 揺れ=同一 timestamp / 別ターン=新 timestamp。送信はせず client 内 dedup のみに使う。
+        lastAssistantAt: e.tail?.lastAssistantAt,
       }));
       for (const ev of detector.observe(inputs, now())) queue.enqueue(ev);
       await queue.flush();

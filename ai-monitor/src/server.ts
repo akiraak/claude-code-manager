@@ -145,6 +145,11 @@ export function startServer(opts: ServerOptions, source: EntrySource = new Local
       tts,
       store: voiceStore,
       onUtterance: (u) => {
+        // 生成された読み上げテキストをサーバコンソールに出す (logs/voice-server.log にも残る)。
+        const time = new Date().toLocaleTimeString('ja-JP', { hour12: false });
+        const proj = u.projectName ?? u.projectDir;
+        const audio = u.audio ? '🔊' : '(no-audio)';
+        console.log(`[ai-monitor] voice ▶ ${time} [${u.kind}] ${proj} <${u.clientId}> ${audio} ${u.text}`);
         for (const fn of voiceListeners) {
           try { fn(u); } catch { /* リスナのエラーは握りつぶす */ }
         }
@@ -269,7 +274,9 @@ export function startServer(opts: ServerOptions, source: EntrySource = new Local
     try {
       const entries = await source.buildEntries({ summarizer });
       if (itemId === 'dashboard' || itemId === '') {
-        res.send(renderDashboard(entries));
+        // server モードだけボイスコントロール UI を載せる (voice パイプライン /
+        // /api/voice/* は server モードのみマウントされるため)。
+        res.send(renderDashboard(entries, { voice: mode === 'server' }));
         return;
       }
       if (itemId.startsWith('proc:')) {

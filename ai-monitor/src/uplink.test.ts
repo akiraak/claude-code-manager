@@ -187,6 +187,64 @@ test('VoiceEventDetector: ai-processing 継続で progress を周期的に出す
   assert.equal(p2[0]?.kind, 'progress');
 });
 
+test('VoiceEventDetector: 同一ターンの揺れによる completed 二重発火を抑制 (lastAssistantAt 不変)', () => {
+  const d = new VoiceEventDetector();
+  d.observe([sess('waiting')], 0); // baseline
+  d.observe([sess('ai-processing', { lastUserText: 'u1' })], 10); // started
+  const c1 = d.observe([sess('waiting', { lastAssistantText: 'できた', lastAssistantAt: 'tA' })], 20);
+  assert.equal(c1.length, 1);
+  assert.equal(c1[0].kind, 'completed');
+
+  // ターン完了直後の mtime 揺れ: started を挟んでも同じ assistant メッセージ(tA)のまま
+  // completed が再発火 → 抑制。
+  const st = d.observe([sess('ai-processing', { lastUserText: 'u1' })], 30);
+  assert.equal(st[0].kind, 'started');
+  const c2 = d.observe([sess('waiting', { lastAssistantText: 'できた', lastAssistantAt: 'tA' })], 40);
+  assert.deepEqual(c2, []);
+});
+
+test('VoiceEventDetector: 別ターンの completed は同一テキスト・短時間でも発話 (取りこぼさない)', () => {
+  const d = new VoiceEventDetector();
+  d.observe([sess('waiting')], 0);
+  d.observe([sess('ai-processing')], 10);
+  const c1 = d.observe([sess('waiting', { lastAssistantText: '完了', lastAssistantAt: 'tA' })], 20);
+  assert.equal(c1.length, 1);
+
+  // 新ターン: assistant メッセージが変わる(tB)。同じ短文・直後でも別の正規完了として発話する。
+  d.observe([sess('ai-processing')], 22);
+  const c2 = d.observe([sess('waiting', { lastAssistantText: '完了', lastAssistantAt: 'tB' })], 24);
+  assert.equal(c2.length, 1);
+  assert.equal(c2[0].detail, '完了');
+});
+
+test('VoiceEventDetector: lastAssistantAt が無いときは抑制しない (正規イベントを落とさない)', () => {
+  const d = new VoiceEventDetector();
+  d.observe([sess('waiting')], 0);
+  d.observe([sess('ai-processing')], 10);
+  const c1 = d.observe([sess('waiting', { lastAssistantText: '完了' })], 20); // lastAssistantAt 無し
+  assert.equal(c1.length, 1);
+  d.observe([sess('ai-processing')], 30);
+  const c2 = d.observe([sess('waiting', { lastAssistantText: '完了' })], 40); // 識別子無し → 抑制せず発話
+  assert.equal(c2.length, 1);
+});
+
+test('VoiceEventDetector: awaiting は同一ターンのフリッカを抑制し別プロンプトは発話', () => {
+  const d = new VoiceEventDetector();
+  d.observe([sess('ai-processing')], 0); // baseline
+  const a1 = d.observe([sess('awaiting-user', { lastAssistantText: '承認して', lastAssistantAt: 'tA' })], 10);
+  assert.equal(a1[0].kind, 'awaiting');
+  // 同一ターン(tA)で awaiting→waiting→awaiting と揺れても 2 回目は抑制
+  // (awaiting→waiting はイベントを出さないので lastSpokenSig は awaiting のまま)
+  d.observe([sess('waiting', { lastAssistantText: '承認して', lastAssistantAt: 'tA' })], 20);
+  const a2 = d.observe([sess('awaiting-user', { lastAssistantText: '承認して', lastAssistantAt: 'tA' })], 30);
+  assert.deepEqual(a2, []);
+  // 新しいプロンプト (別 assistant メッセージ tB) は発話する
+  d.observe([sess('waiting', { lastAssistantText: '承認して', lastAssistantAt: 'tA' })], 40);
+  const a3 = d.observe([sess('awaiting-user', { lastAssistantText: '別の確認', lastAssistantAt: 'tB' })], 50);
+  assert.equal(a3.length, 1);
+  assert.equal(a3[0].kind, 'awaiting');
+});
+
 test('VoiceEventDetector: 消えたセッションは破棄し再登場は baseline 扱い', () => {
   const d = new VoiceEventDetector();
   d.observe([sess('waiting')], 0);
