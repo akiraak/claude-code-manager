@@ -7,11 +7,12 @@
 #     CCM_INGEST_TOKENS / CCM_CORS_ORIGIN / ANTHROPIC_API_KEY / GEMINI_API_KEY /
 #     GEMINI_TTS_MODEL / CCM_VOICE_TTS_PROVIDER。スクリプトは値を上書きせず、env にも
 #     .env にも無いときだけトークンの開発用デフォルトを注入する。
-#   スクリプト固有の設定 … env > 既定 のみ (.env は読まない。cli.ts は --port/--host
-#     引数で受け取り env/.env を参照しないため)。CCM_SERVER_PORT / CCM_SERVER_HOST / SKIP_BUILD。
+#   起動スクリプト固有の設定 … env > リポ直下 .env > 既定 (このスクリプトが .env も読む)。
+#     CCM_SERVER_PORT / CCM_SERVER_HOST。直接 node 起動時は --port/--host で渡すこと。
+#   SKIP_BUILD / CCM_LOG_DIR は env > 既定 のみ (.env 非対応)。
 #
-#   CCM_SERVER_PORT   待受ポート (既定 8190・.env 不可)
-#   CCM_SERVER_HOST   待受ホスト (既定 127.0.0.1。LAN/Tunnel 公開なら 0.0.0.0・.env 不可)
+#   CCM_SERVER_PORT   待受ポート (既定 8190)
+#   CCM_SERVER_HOST   待受ホスト (既定 127.0.0.1。LAN/他端末から接続させるなら 0.0.0.0)
 #   CCM_INGEST_TOKENS ingest 用 Bearer (必須・カンマ区切り)。env/.env 無しなら開発用デフォルト
 #                     (旧名 CCM_CLIENT_TOKENS も後方互換で可・非推奨)
 #   GEMINI_API_KEY    Gemini TTS キー (未設定なら音は出ずテキストのみ)
@@ -22,8 +23,12 @@
 set -euo pipefail
 cd "$(dirname "$0")"
 
-PORT="${CCM_SERVER_PORT:-8190}"
-HOST="${CCM_SERVER_HOST:-127.0.0.1}"
+# .env から KEY の値を取り出す (env に無いとき .env を参照し env > .env > 既定 を実現)。
+# 注: cli.ts/dotenv はポート/ホストを読まないので、これらは起動スクリプトが解決して --port/--host で渡す。
+dotenv_get() { [ -f .env ] && grep -E "^$1=." .env 2>/dev/null | tail -n1 | cut -d= -f2- || true; }
+
+PORT="${CCM_SERVER_PORT:-$(dotenv_get CCM_SERVER_PORT)}"; PORT="${PORT:-8190}"
+HOST="${CCM_SERVER_HOST:-$(dotenv_get CCM_SERVER_HOST)}"; HOST="${HOST:-127.0.0.1}"
 
 # --- ログをファイルにも残す (Claude Code から参照できるように) ---
 # exec で foreground 実行なので、tee へ流して「ターミナル表示 + ファイル追記」の両立にする。

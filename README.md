@@ -161,7 +161,8 @@ CCM_MIRROR_PROJECTS=claude-code-manager ./run-voice-client.sh
 
 設定の解決順は対象で分かれる:
 - **node (`cli.ts`) が読む設定** (`CCM_CLIENT_TOKEN(S)` / `CCM_CORS_ORIGIN` / `ANTHROPIC_API_KEY` / `GEMINI_API_KEY` / `GEMINI_TTS_MODEL` / `CCM_VOICE_TTS_PROVIDER` / `CCM_SERVER_URL` / `CCM_CLIENT_LABEL` / `CCM_MIRROR_PROJECTS` / `CCM_DRYRUN`) … **env > リポ直下 `.env` > 既定**（`.env` は `dotenv` が読む。スクリプトは値を上書きせず、env にも `.env` にも無いときだけトークンの開発用デフォルトを注入し警告する＝本番不可）
-- **スクリプト固有のポート/ホスト** (`CCM_SERVER_PORT` / `CCM_SERVER_HOST` / `CCM_CLIENT_DASH_PORT`) と `SKIP_BUILD` … **env > 既定 のみ**（`.env` は読まない。`cli.ts` が `--port`/`--host` 引数で受け取り env/`.env` を参照しないため）
+- **起動スクリプトが解決するポート/ホスト** (`CCM_SERVER_HOST` / `CCM_SERVER_PORT` / `CCM_CLIENT_DASH_PORT`) … **env > リポ直下 `.env` > 既定**（`run-voice-*.sh` が `.env` も読み `--host`/`--port` で渡す。`cli.ts` 自体は読まないので、直接 `node dist/cli.js` 起動時は `--host`/`--port` で指定する）
+- **`SKIP_BUILD` / `CCM_LOG_DIR`** … **env > 既定 のみ**（実行ごとのフラグ・`.env` 非対応）
 
 各スクリプトは出力を **`logs/voice-server.log` / `logs/voice-client.log`** に `tee` で追記する（ターミナル表示と両立。`logs/` は gitignore 済み・`CCM_LOG_DIR` で変更可）。後から `tail -f logs/voice-server.log` や Claude Code から参照できる。
 

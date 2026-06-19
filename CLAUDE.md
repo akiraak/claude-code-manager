@@ -66,7 +66,7 @@ upstream への反映は後追いで行う。
 ローカル動作検証用の起動スクリプト (ビルド + 同モードの既存停止 + 起動。3 つ併存可):
 - `./run-voice-server.sh` — server モード (既定 8190。ミラー + 音声)。`http://127.0.0.1:8190/view?item=dashboard`
 - `./run-voice-client.sh` — client モード (既定 8191。この端末の状態を server へ push)
-- 各スクリプトの停止対象は自モードのみ (`pgrep -f "...--mode <mode>"`) なので互いを巻き込まない。設定の解決順は対象で分かれる: node (`cli.ts`) が読む設定 (トークン/キー/URL/ラベル/allowlist 等) は **env > リポ直下 `.env` > 既定**、スクリプト固有のポート/ホストと `SKIP_BUILD` は **env > 既定** (`.env` 非対応。`cli.ts` が `--port`/`--host` 引数で受け取り env/`.env` を見ないため)。
+- 各スクリプトの停止対象は自モードのみ (`pgrep -f "...--mode <mode>"`) なので互いを巻き込まない。設定の解決順: node (`cli.ts`) が読む設定 (トークン/キー/URL/ラベル/allowlist 等) と、起動スクリプトが解決するポート/ホスト (`CCM_SERVER_HOST`/`CCM_SERVER_PORT`/`CCM_CLIENT_DASH_PORT`) は **env > リポ直下 `.env` > 既定** (ポート/ホストは `run-voice-*.sh` が `.env` を読む。直接 `node` 起動時は `--host`/`--port`)。`SKIP_BUILD`/`CCM_LOG_DIR` のみ **env > 既定**。
 
 ### ダッシュボードの状態バッジ
 
