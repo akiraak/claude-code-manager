@@ -1,0 +1,30 @@
+# ビルドコンテキスト (= リポジトリ直下) を軽量化する。
+# ai-monitor の Docker ビルドは ai-monitor/ 配下しか COPY しないが、
+# context 全体がデーモンへ転送されるため重い物 (vibeboard / .git 等) を除外する。
+
+.git
+.gitignore
+.vscode
+.claude
+
+# 依存・ビルド成果物 (コンテナ内で npm ci / tsc し直す)
+**/node_modules
+**/dist
+
+# 開発管理画面 (デプロイ対象外・巨大)
+vibeboard
+
+# ドキュメント・プラン (実行に不要)
+docs
+TODO.md
+DONE.md
+README.md
+CLAUDE.md
+
+# シークレット (env_file で注入する。イメージに焼かない)
+.env
+**/.env
+
+# OS / エディタ
+.DS_Store
+*.log

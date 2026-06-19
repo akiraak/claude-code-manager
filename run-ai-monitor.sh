@@ -41,7 +41,9 @@ stop_existing() {
 }
 
 stop_existing "vibeboard"   "vibeboard/dist/cli.js"
-stop_existing "ai-monitor"  "ai-monitor/dist/cli.js"
+# local モードのみを対象にする (voice の server/client は run-voice-*.sh が管理するため巻き込まない)。
+# 旧形式 (--mode 無しで --port 起動) も拾う。どちらも --mode server/client には一致しない。
+stop_existing "ai-monitor"  "ai-monitor/dist/cli.js( --mode local| --port)"
 
 VIBEBOARD_PID=""
 AI_MONITOR_PID=""
@@ -56,7 +58,7 @@ cleanup() {
 }
 trap cleanup EXIT INT TERM
 
-node ai-monitor/dist/cli.js --port "$AI_MONITOR_PORT" &
+node ai-monitor/dist/cli.js --mode local --port "$AI_MONITOR_PORT" &
 AI_MONITOR_PID=$!
 echo "[start] ai-monitor pid=$AI_MONITOR_PID port=$AI_MONITOR_PORT" >&2
 

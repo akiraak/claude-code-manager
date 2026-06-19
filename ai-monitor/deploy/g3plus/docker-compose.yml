@@ -1,0 +1,36 @@
+# ai-monitor — server モード公開アグリゲータ（g3plus + Cloudflare Tunnel）
+#
+# 最終配置: /home/ubuntu/g3plus-ops/ai-monitor/docker-compose.yml
+# アプリリポ: /home/ubuntu/claude-code-manager（context）を g3plus に clone しておく。
+#
+# 起動: このディレクトリで
+#   docker compose build --no-cache && docker compose down && docker compose up -d
+#   docker logs ai-monitor --tail 30
+
+services:
+  ai-monitor:
+    build:
+      # アプリコードの位置（claude-code-manager リポ直下）。.dockerignore で軽量化済み。
+      context: /home/ubuntu/claude-code-manager
+      # Dockerfile は ops 側に置く（cooking-basket / photorans と同方式）。
+      dockerfile: /home/ubuntu/g3plus-ops/ai-monitor/Dockerfile
+    container_name: ai-monitor
+    restart: unless-stopped
+    env_file:
+      - ./.env
+    # 外部ポート開放は不要: Cloudflare Tunnel が n8n_default 経由で
+    # http://ai-monitor:8181 に解決する（`ports:` は張らない）。
+    # expose は同一ネットワーク内向けの宣言（ドキュメント目的）。
+    expose:
+      - "8181"
+    networks:
+      - n8n_default
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+networks:
+  n8n_default:
+    external: true

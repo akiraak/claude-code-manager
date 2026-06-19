@@ -8,3 +8,6 @@ node_modules/
 
 # PoC が生成する音声 (コミットしない)
 ai-monitor/poc/voice/out/
+
+# run-voice-*.sh の実行ログ (Claude Code 参照用・ローカルのみ)
+logs/
