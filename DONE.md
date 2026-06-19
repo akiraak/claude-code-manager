@@ -1,5 +1,11 @@
 # DONE
 
+- 2026-06-19: macOS (darwin) の claude プロセス検出を実装する（Mac で進捗音声が喋らない原因）([plan](docs/plans/archive/darwin-process-detection.md))
+    - darwin 経路がスキャフォルド（常に空配列）のままで Mac の全セッションが常に stopped 扱いになり、状態遷移が起きず進捗音声が一切喋らなかった。`listClaudeProcessesDarwin` を `ps -axww -o pid=,comm=,command=` + `lsof -a -d cwd -p <pids> -Fpn` ベースに実装し `{pid, cwd}` を返すようにした（Linux 経路 = pgrep + /proc は不変）
+    - Phase 1: パーサを純関数 `parsePsClaudePids` / `parseLsofCwd` として切り出し、Mac 実機出力ベースの fixture で単体テスト（`processes.test.ts` 新規・9 ケース）。判定は Linux の `isRealClaude` に揃える（comm or argv[0] basename が claude）。ps/lsof 失敗は握って 1 回だけ warn し縮退
+    - Phase 2: `listClaudeProcessesDarwin` を ps+lsof 実装にワイヤリング（1 回の lsof でバッチ cwd 取得）
+    - Phase 3: 実機検証。Mac 単体で `listClaudeProcesses` が稼働中セッションを cwd 付き検出 → `buildEntries` が ai-processing に分類 → client が `process:{pid}` 付き snapshot を push を確認。さらに WSL2 サーバ（`10.0.1.137:8190`）への実 `--mode client` push で発話までユーザー確認済み
+    - テスト: `npm test` 151 pass / 0 fail。コミット `8120024`（origin/main へ push 済み）
 - 2026-06-18: claudeの進捗状況を音声でしゃべる機能 (push 型・公開ミラー + キャラ口調 TTS) ([plan](docs/plans/archive/claude-progress-voice.md))
     - 構成: 各端末 `--mode client` が状態を push → 公開サーバ `--mode server` が集約 + ちょビ口調短文 (Haiku) + Gemini TTS → ブラウザでミラー表示 + 順次再生。pull→push へ設計転換し ai-monitor を 3 モード化 (local 不変)
     - Phase 1: データソース抽象化 (`EntrySource`) / Gemini TTS→ブラウザ再生 PoC / redaction・保持方針確定 ([plan](docs/plans/archive/claude-progress-voice-phase1.md))
