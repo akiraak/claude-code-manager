@@ -86,6 +86,19 @@ h1 { font-size: 18px; margin: 0 0 12px; }
 .badge-waiting       { background: #fff3cd; color: #8a6100; }
 .badge-stopped       { background: #e1e4e8; color: #57606a; }
 @keyframes badge-pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.35; } }
+.card-client {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  padding: 1px 7px;
+  border-radius: 10px;
+  font-size: 10px;
+  font-weight: 600;
+  white-space: nowrap;
+  background: #eef1f4;
+  color: #4a5568;
+}
+.card-client::before { content: "🖥"; font-size: 9px; }
 
 .cards {
   display: grid;
@@ -387,6 +400,8 @@ export interface DashboardCardData {
   state: ActivityState;
   stateLabel: string;
   stateTooltip: string;
+  /** 送信元クライアントのラベル (server ミラーのみ。local/client では null = 非表示) */
+  clientLabel: string | null;
   /** プロセス未生存時は null */
   pid: number | null;
   /** ISO 文字列。詳細表示やツールチップ用に raw も保持 (jsonl 無しなら null) */
@@ -434,6 +449,7 @@ export function entryToDashboardCardData(entry: MonitorEntry): DashboardCardData
     state: entry.state,
     stateLabel: STATE_LABEL_JA[entry.state],
     stateTooltip: STATE_TOOLTIP_JA[entry.state],
+    clientLabel: entry.clientId ?? null,
     pid,
     lastActivityAt: entry.lastActivityAt ?? null,
     lastActivityRel,
@@ -514,6 +530,7 @@ function renderCardFromData(data: DashboardCardData): string {
     <a class="card-link" href="${href}" data-hash="${escapeHtml(data.hashPath)}" title="${escapeHtml(data.cwd)}">
       <div class="card-header">
         <span class="badge badge-${data.state}" title="${escapeHtml(data.stateTooltip)}">${escapeHtml(data.stateLabel)}</span>
+        ${data.clientLabel ? `<span class="card-client" title="送信元クライアント">${escapeHtml(data.clientLabel)}</span>` : ''}
         <span class="card-cwd">${escapeHtml(data.cwdShort)}</span>
         <span class="card-meta">${escapeHtml(data.meta)}</span>
       </div>
@@ -728,6 +745,7 @@ const DASHBOARD_LIVE_SCRIPT = `
       + '<a class="card-link" href="' + href + '" data-hash="' + esc(data.hashPath) + '" title="' + esc(data.cwd) + '">'
       +   '<div class="card-header">'
       +     '<span class="badge badge-' + esc(data.state) + '" title="' + esc(data.stateTooltip) + '">' + esc(data.stateLabel) + '</span>'
+      +     (data.clientLabel ? '<span class="card-client" title="送信元クライアント">' + esc(data.clientLabel) + '</span>' : '')
       +     '<span class="card-cwd">' + esc(data.cwdShort) + '</span>'
       +     '<span class="card-meta">' + esc(data.meta) + '</span>'
       +   '</div>'
@@ -812,6 +830,18 @@ const DASHBOARD_LIVE_SCRIPT = `
     swapPrefixClass(badge, 'badge-', 'badge-' + data.state);
     setText(badge, data.stateLabel);
     setAttr(badge, 'title', data.stateTooltip);
+
+    // 送信元クライアントのチップ (server ミラーのみ。バッジ直後に表示)
+    var clientEl = card.querySelector('.card-header .card-client');
+    if (data.clientLabel) {
+      if (!clientEl) {
+        if (badge) badge.insertAdjacentHTML('afterend', '<span class="card-client" title="送信元クライアント">' + esc(data.clientLabel) + '</span>');
+      } else {
+        setText(clientEl, data.clientLabel);
+      }
+    } else if (clientEl) {
+      clientEl.remove();
+    }
 
     var link = card.querySelector('.card-link');
     if (link) {

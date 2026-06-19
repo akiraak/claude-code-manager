@@ -65,6 +65,12 @@ export interface MonitorEntry {
   state: ActivityState;
   /** AI 要約結果。Summarizer 未提供時 / jsonl 無し時は undefined。 */
   summary?: SummaryResult;
+  /**
+   * 送信元クライアントのラベル (例 `wsl2-akira` / `mac-akira`)。
+   * server モードのミラー (RemoteEntrySource) でのみセットされ、local/client モードでは undefined。
+   * カードに「どの端末のセッションか」を表示するために使う。
+   */
+  clientId?: string;
 }
 
 export interface BuildEntriesOptions {

@@ -179,5 +179,6 @@ function toMonitorEntry(
     tail: e.tail ?? undefined,
     state: e.state,
     summary,
+    clientId,
   };
 }

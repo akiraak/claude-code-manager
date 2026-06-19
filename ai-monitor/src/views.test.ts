@@ -52,6 +52,21 @@ test('entryToDashboardCardData: 必要フィールドが揃い、相対時刻と
   assert.deepEqual(data.summary, { state: 'ok', text: '実装中', generatedAt: data.summary!.generatedAt! });
 });
 
+test('entryToDashboardCardData: clientId があれば clientLabel に入る / 無ければ null', () => {
+  assert.equal(entryToDashboardCardData(makeEntry({ clientId: 'wsl2-akira' })).clientLabel, 'wsl2-akira');
+  assert.equal(entryToDashboardCardData(makeEntry()).clientLabel, null);
+});
+
+test('renderDashboard: clientId があるとカードに送信元ラベル span が出る / 無ければ出ない', () => {
+  // <script> 以降の DASHBOARD_LIVE_SCRIPT にも span 文字列リテラルが含まれるので、
+  // 実カード部 (最初の <script> より前) に絞って照合する。
+  const cardsOnly = (html: string): string => html.split('<script>')[0];
+  const withLabel = cardsOnly(renderDashboard([makeEntry({ state: 'waiting', clientId: 'mac-akira' })]));
+  assert.match(withLabel, /<span class="card-client"[^>]*>mac-akira<\/span>/);
+  const without = cardsOnly(renderDashboard([makeEntry({ state: 'waiting' })]));
+  assert.doesNotMatch(without, /<span class="card-client"/); // head の CSS `.card-client {` とは別物
+});
+
 test('entryToDashboardCardData: tail / process / summary が無いとき安全なデフォルトを返す', () => {
   const data = entryToDashboardCardData(makeEntry({ state: 'stopped' }));
 
