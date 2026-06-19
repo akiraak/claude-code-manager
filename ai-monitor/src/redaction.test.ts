@@ -3,6 +3,8 @@ import assert from 'node:assert/strict';
 
 import { redact, truncate, sanitizeText, MAX_TEXT_CHARS } from './redaction';
 
+// 注: 本物のトークン形に似たフィクスチャはリテラルのまま書くと GitHub secret scanning に
+// 検出されるため、prefix を文字列分割している (実行時は連結され、redaction のテストとしては等価)。
 test('Anthropic キーをマスクする', () => {
   const r = redact('key is sk-' + 'ant-api03-abcdefghijklmnopqrstuvwxyz0123456789 done');
   assert.match(r.text, /«redacted:anthropic-key»/);
@@ -17,11 +19,11 @@ test('Google / GitHub / AWS / Slack の鍵をマスクする', () => {
   const gh = redact('ghp' + '_abcdefghijklmnopqrstuvwxyz0123456789');
   assert.match(gh.text, /«redacted:github-token»/);
 
+  // AWS ドキュメントの例示キー (GitHub secret scanning の除外リスト扱いなので分割不要)。
   const aws = redact('id=AKIAIOSFODNN7EXAMPLE');
   assert.match(aws.text, /«redacted:aws-key»/);
 
-  // 偽の固定フィクスチャ (redaction 検証用)。GitHub の Slack トークン検出器に当たらないよう
-  // 数字セグメントを避けた明示的なダミー文字列にしている (regex `xox[baprs]-[A-Za-z0-9-]{10,}` は一致)。
+  // Slack: 数字セグメントを避けた明示ダミー (regex `xox[baprs]-[A-Za-z0-9-]{10,}` は一致)。
   const slack = redact('xoxb-EXAMPLE-FIXTURE-TOKEN');
   assert.match(slack.text, /«redacted:slack-token»/);
 });
