@@ -20,6 +20,8 @@ test('Google / GitHub / AWS / Slack の鍵をマスクする', () => {
   const aws = redact('id=AKIAIOSFODNN7EXAMPLE');
   assert.match(aws.text, /«redacted:aws-key»/);
 
+  // 偽の固定フィクスチャ (redaction 検証用)。GitHub の Slack トークン検出器に当たらないよう
+  // 数字セグメントを避けた明示的なダミー文字列にしている (regex `xox[baprs]-[A-Za-z0-9-]{10,}` は一致)。
   const slack = redact('xoxb-EXAMPLE-FIXTURE-TOKEN');
   assert.match(slack.text, /«redacted:slack-token»/);
 });
