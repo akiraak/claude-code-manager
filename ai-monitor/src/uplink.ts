@@ -578,6 +578,15 @@ export function createUplinkRunner(config: ClientConfig, deps: UplinkRunnerDeps 
   let snapshotNextAttemptAt = 0;
   let snapshotBackoffMs = 0;
   let inflight = false;
+  // サーバ到達状態。接続OK / 切れ の「遷移」だけをログする (毎回の成功送信は無言)。
+  let connected = false;
+  let everConnected = false;
+  const markConnected = (): void => {
+    if (connected) return;
+    connected = true;
+    if (!config.dryrun) log(`[uplink] サーバ接続${everConnected ? '復帰' : 'OK'} (server=${config.serverUrl})`);
+    everConnected = true;
+  };
   // entry.id → 最後に「200 で受理された」指紋 / 送信時刻。変化検出 + heartbeat + 公平性に使う。
   const lastSentFp = new Map<string, string>();
   const lastSentAtMs = new Map<string, number>();
@@ -617,6 +626,7 @@ export function createUplinkRunner(config: ClientConfig, deps: UplinkRunnerDeps 
       const payload = buildSnapshotPayload(config.label, entry, events, { sentAtMs: now() });
       const r = await poster('/snapshot', payload);
       if (r.ok) {
+        markConnected();
         // changed:true / false (dedup) どちらも 200。受理されたので指紋と時刻を更新する。
         lastSentFp.set(entry.id, entrySnapshotFingerprint(entry));
         lastSentAtMs.set(entry.id, now());
@@ -625,6 +635,7 @@ export function createUplinkRunner(config: ClientConfig, deps: UplinkRunnerDeps 
         continue;
       }
       if (r.status === 429) {
+        markConnected(); // 429 はサーバが応答している = 到達できている
         // レート制限。今 tick は打ち切り、短時間クールダウン。lastSent を更新しないので
         // 送れなかった project は次 tick で「古い順」の先頭に来る (恒久 starve しない)。
         snapshotBackoffMs = 0;
@@ -633,6 +644,7 @@ export function createUplinkRunner(config: ClientConfig, deps: UplinkRunnerDeps 
         return;
       }
       // 5xx / network / timeout / その他 4xx (認証エラー等) → サーバ不調扱いで指数バックオフ。
+      connected = false; // 接続が切れた (次に成功したら「接続復帰」をログ)
       snapshotBackoffMs = Math.min(Math.max(SNAPSHOT_BASE_BACKOFF_MS, snapshotBackoffMs * 2), SNAPSHOT_MAX_BACKOFF_MS);
       snapshotNextAttemptAt = now() + snapshotBackoffMs;
       log(`[uplink] snapshot 送信失敗 (status=${r.status ?? 'net'})。${Math.round(snapshotBackoffMs / 1000)}s バックオフ`);

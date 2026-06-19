@@ -177,6 +177,11 @@ export interface IngestDeps {
    * (ingest の応答を待たせない)。
    */
   onVoiceEvent?: (payload: VoiceEventPayload) => void;
+  /**
+   * 検証を通った ingest を受けたときに clientId を渡して呼ばれる (接続状況ログ用)。
+   * snapshot / voice-event 両方で毎回呼ばれる。初回接続/再接続の判定・ログは呼び出し側 (server.ts) が行う。
+   */
+  onContact?: (clientId: string, via: 'snapshot' | 'voice-event') => void;
 }
 
 /**
@@ -186,6 +191,7 @@ export function createIngestRouter(deps: IngestDeps): Router {
   const now = deps.now ?? (() => Date.now());
   const onChange = deps.onChange ?? (() => { /* noop */ });
   const onVoiceEvent = deps.onVoiceEvent ?? (() => { /* noop */ });
+  const onContact = deps.onContact ?? (() => { /* noop */ });
   const router = Router();
 
   router.post('/snapshot', (req: Request, res: Response) => {
@@ -194,6 +200,8 @@ export function createIngestRouter(deps: IngestDeps): Router {
       res.status(400).json({ error: parsed.error });
       return;
     }
+    // 認証 (bearerAuth) + 検証を通った = 正当なクライアントからの到達。レート制限の前に記録する。
+    onContact(parsed.value.clientId, 'snapshot');
     if (!deps.snapshotLimiter.allow(parsed.value.clientId, now())) {
       res.status(429).json({ error: 'rate limited' });
       return;
@@ -211,6 +219,7 @@ export function createIngestRouter(deps: IngestDeps): Router {
       return;
     }
     const v = parsed.value;
+    onContact(v.clientId, 'voice-event');
     const key = `${v.clientId}|${v.projectDir}|${v.kind}`;
     if (!deps.voiceCooldown.allow(key, now())) {
       res.status(429).json({ error: 'cooldown' });

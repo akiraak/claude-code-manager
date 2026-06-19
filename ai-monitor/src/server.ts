@@ -160,6 +160,21 @@ export function startServer(opts: ServerOptions, source: EntrySource = new Local
         `tts=${tts.isEnabled() ? tts.tag : 'none'}`,
     );
 
+    // クライアント接続状況のログ用。clientId ごとに最終受信時刻を覚え、初回接続と
+    // 一定時間 (RECONNECT_GAP_MS) 空いた後の再接続だけをログする (毎 tick の受信は無言)。
+    const clientLastSeenMs = new Map<string, number>();
+    const RECONNECT_GAP_MS = 60_000;
+    const onContact = (clientId: string, via: 'snapshot' | 'voice-event'): void => {
+      const t = Date.now();
+      const prev = clientLastSeenMs.get(clientId);
+      clientLastSeenMs.set(clientId, t);
+      if (prev === undefined) {
+        console.log(`[ai-monitor] ingest: クライアント接続 "${clientId}" (${via})`);
+      } else if (t - prev > RECONNECT_GAP_MS) {
+        console.log(`[ai-monitor] ingest: クライアント再接続 "${clientId}" (${via}, ${Math.round((t - prev) / 1000)}s ぶり)`);
+      }
+    };
+
     app.use(
       '/api/ingest',
       bearerAuth(tokens),
@@ -171,6 +186,7 @@ export function startServer(opts: ServerOptions, source: EntrySource = new Local
         onChange: notifyWatchers,
         // voice-event 到着で音声生成を起動 (best-effort・応答を待たせない)。
         onVoiceEvent: (v) => { void pipeline.handle(v); },
+        onContact,
       }),
     );
 
