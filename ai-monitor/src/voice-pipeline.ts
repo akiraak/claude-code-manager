@@ -17,8 +17,24 @@ import type { Utterance, VoiceStore } from './voice-store';
  * - `handle` は **絶対に throw しない**（ingest の応答や他イベントを巻き込まないため fire-and-forget で呼ばれる）。
  */
 
-/** 音声化する種別。`started` は除外。 */
+/** 音声化する種別（既定）。`started` は除外。 */
 export const SPOKEN_KINDS: readonly VoiceEventKind[] = ['awaiting', 'completed', 'progress'];
+
+/**
+ * env `CCM_VOICE_SPOKEN_KINDS`（csv）を読み上げ種別の配列にする純関数。
+ * - 未設定/空/全て不正 → 既定 {@link SPOKEN_KINDS} にフォールバック（typo で全無音にならないよう fail-safe）。
+ * - 許可は `awaiting` / `completed` / `progress` のみ。`started` や未知の値は無視する
+ *   （`started` は要件上どの設定でも読み上げない）。重複は畳む。
+ */
+export function parseSpokenKinds(raw: string | undefined): VoiceEventKind[] {
+  if (raw === undefined) return [...SPOKEN_KINDS];
+  const allowed = new Set<VoiceEventKind>(SPOKEN_KINDS);
+  const picked = raw
+    .split(',')
+    .map(s => s.trim().toLowerCase())
+    .filter((s): s is VoiceEventKind => allowed.has(s as VoiceEventKind));
+  return picked.length > 0 ? Array.from(new Set(picked)) : [...SPOKEN_KINDS];
+}
 
 export interface VoicePipelineDeps {
   persona: DialogueGenerator;
@@ -28,6 +44,12 @@ export interface VoicePipelineDeps {
   now?: () => number;
   /** utterance 生成完了時に呼ぶ（SSE `voice-utterance` push 用）。発話数分だけ順に呼ばれる。 */
   onUtterance?: (u: Utterance) => void;
+  /**
+   * 音声化する種別。既定 {@link SPOKEN_KINDS}（awaiting/completed/progress）。
+   * env `CCM_VOICE_SPOKEN_KINDS` で絞り込み、頻度を下げられる（例: progress を外す）。
+   * `started` は要件上どの設定でも読み上げない（既定に含まれない）。
+   */
+  spokenKinds?: readonly VoiceEventKind[];
 }
 
 function errMsg(err: unknown): string {
@@ -40,6 +62,7 @@ export class VoicePipeline {
   private readonly store: VoiceStore;
   private readonly now: () => number;
   private readonly onUtterance: (u: Utterance) => void;
+  private readonly spokenKinds: ReadonlySet<VoiceEventKind>;
   /** {@link enqueue} の直列化チェーン。前イベントの全 utterance を出し切ってから次へ。 */
   private chain: Promise<void> = Promise.resolve();
 
@@ -49,6 +72,7 @@ export class VoicePipeline {
     this.store = deps.store;
     this.now = deps.now ?? (() => Date.now());
     this.onUtterance = deps.onUtterance ?? (() => { /* noop */ });
+    this.spokenKinds = new Set(deps.spokenKinds ?? SPOKEN_KINDS);
   }
 
   /**
@@ -70,7 +94,7 @@ export class VoicePipeline {
 
   async handle(event: VoiceEventPayload): Promise<Utterance[]> {
     try {
-      if (!SPOKEN_KINDS.includes(event.kind)) return [];
+      if (!this.spokenKinds.has(event.kind)) return [];
 
       const persona = this.persona.getPersona();
       const lastConversation = this.store.recentTextsForSession(

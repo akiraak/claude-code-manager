@@ -10,7 +10,7 @@ import { AggregateStore } from './store';
 import { Summarizer } from './summarize';
 import { projectsDir } from './transcript';
 import { selectTtsProvider } from './tts';
-import { VoicePipeline } from './voice-pipeline';
+import { parseSpokenKinds, VoicePipeline } from './voice-pipeline';
 import { isValidUtteranceId, toUtteranceMeta, VoiceStore, type Utterance } from './voice-store';
 import { buildProcessViewData, entryToDashboardCardData, renderDashboard, renderNotFound, renderProcessView } from './views';
 
@@ -143,10 +143,12 @@ export function startServer(opts: ServerOptions, source: EntrySource = new Local
       ttsStyle: persona.teacher.ttsStyle,
     });
     const voiceStore = new VoiceStore();
+    const spokenKinds = parseSpokenKinds(process.env.CCM_VOICE_SPOKEN_KINDS);
     const pipeline = new VoicePipeline({
       persona: personaGen,
       tts,
       store: voiceStore,
+      spokenKinds,
       onUtterance: (u) => {
         // 生成された読み上げテキストをサーバコンソールに出す (logs/voice-server.log にも残る)。
         const time = new Date().toLocaleTimeString('ja-JP', { hour12: false });
@@ -163,7 +165,7 @@ export function startServer(opts: ServerOptions, source: EntrySource = new Local
     console.log(
       `[ai-monitor] voice: persona=${personaGen.isEnabled() ? 'haiku' : 'fallback'} ` +
         `(${persona.teacher.name} & ${persona.student.name}), ` +
-        `tts=${tts.isEnabled() ? tts.tag : 'none'}`,
+        `tts=${tts.isEnabled() ? tts.tag : 'none'}, spoken=${spokenKinds.join(',')}`,
     );
 
     // クライアント接続状況のログ用。clientId ごとに最終受信時刻を覚え、初回接続と
