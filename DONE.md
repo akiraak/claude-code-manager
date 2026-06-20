@@ -1,5 +1,10 @@
 # DONE
 
+- 2026-06-19: 端末ごとの会話が混じって聞こえる問題の調査と修正（1 イベントの複数音声を通して流す）([plan](docs/plans/archive/voice-cross-terminal-mixing.md))
+    - 根本原因: server の `onVoiceEvent: v => void pipeline.handle(v)` が直列化なしの fire-and-forget で、近接イベントの `handle` が並行実行。発話ごとに `await tts` を挟むため `onUtterance`(=SSE) が端末をまたいで交互発火し、クライアントのフラット FIFO が混線再生していた
+    - 修正: `VoicePipeline` に内部プロミスチェーン + `enqueue(event)` を追加（前イベントの全 utterance を出し切ってから次へ）。`server.ts` 結線を `pipeline.enqueue(v)` に。`handle`(per-event worker)は不変＝既存テスト互換。クライアント/store/ingest は無改修（SSE 順序が保証され既存 FIFO がそのまま通し再生になる）
+    - 変更: `voice-pipeline.ts`/`server.ts`/`ingest.ts`(doc)。`voice-pipeline.test.ts` に直列化テスト 2 件追加（`delayedTts` で並行なら混線する状況を作り `['A','A','B','B']` を確認・0 発話 started を跨いでも順序保持）。全 170 pass・tsc クリーン・build OK
+    - 手動 E2E（複数 client + 実 TTS）はユーザー環境で別途（鍵が要るため）
 - 2026-06-19: クライアントプロセスのターミナルへの表示を増やす（案出し + 実装）([plan](docs/plans/archive/client-terminal-output.md))
     - 正常時ほぼ無言だった `--mode client` 端末に表示を追加。案 A〜G を提案し、ユーザー選択で **A+B+D** を実装（C/E/F/G=色/env切替/送信サマリ/TTY固定行は見送り）
     - 案A: 状態遷移ライブ表示（`formatTransitionLine`・started は「」括り・progress は経過分前置・40字`…`切り）＝サーバで音声化される素そのもの

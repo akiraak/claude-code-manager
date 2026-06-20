@@ -205,8 +205,8 @@ export interface IngestDeps {
   onChange?: () => void;
   /**
    * voice-event 記録後に **検証済み payload** を渡して呼ばれる (Phase 5 の音声パイプライン起動用)。
-   * server.ts が `v => void pipeline.handle(v)` を渡す。非同期・best-effort で、ここでは await しない
-   * (ingest の応答を待たせない)。
+   * server.ts が `v => void pipeline.enqueue(v)` を渡す (直列化で端末またぎの混線を防ぐ)。
+   * 非同期・best-effort で、ここでは await しない (ingest の応答を待たせない)。
    */
   onVoiceEvent?: (payload: VoiceEventPayload) => void;
   /**

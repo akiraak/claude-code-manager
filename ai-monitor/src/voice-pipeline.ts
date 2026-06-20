@@ -40,6 +40,8 @@ export class VoicePipeline {
   private readonly store: VoiceStore;
   private readonly now: () => number;
   private readonly onUtterance: (u: Utterance) => void;
+  /** {@link enqueue} の直列化チェーン。前イベントの全 utterance を出し切ってから次へ。 */
+  private chain: Promise<void> = Promise.resolve();
 
   constructor(deps: VoicePipelineDeps) {
     this.persona = deps.persona;
@@ -47,6 +49,23 @@ export class VoicePipeline {
     this.store = deps.store;
     this.now = deps.now ?? (() => Date.now());
     this.onUtterance = deps.onUtterance ?? (() => { /* noop */ });
+  }
+
+  /**
+   * voice-event を**直列に**処理する。fire-and-forget の入口（server.ts の `onVoiceEvent`）は
+   * これを使う。1 イベントの全発話を `handle` で出し切ってから次イベントの生成を始めるので、
+   * `onUtterance`（= SSE push）の順が「A を全部 → B を全部」になり、**端末をまたいだ会話の混線を防ぐ**。
+   *
+   * `handle` は throw しない設計だが、万一に備えチェーンは握りつぶして次イベントへ繋ぐ
+   * （1 件の失敗で以降が止まらないように）。返り値は当該イベントの utterance（テスト用）。
+   */
+  enqueue(event: VoiceEventPayload): Promise<Utterance[]> {
+    const run = this.chain.then(() => this.handle(event));
+    this.chain = run.then(
+      () => { /* settled */ },
+      () => { /* handle は throw しない想定だが念のため */ },
+    );
+    return run;
   }
 
   async handle(event: VoiceEventPayload): Promise<Utterance[]> {

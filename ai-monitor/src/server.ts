@@ -191,7 +191,8 @@ export function startServer(opts: ServerOptions, source: EntrySource = new Local
         voiceCooldown,
         onChange: notifyWatchers,
         // voice-event 到着で音声生成を起動 (best-effort・応答を待たせない)。
-        onVoiceEvent: (v) => { void pipeline.handle(v); },
+        // enqueue で直列化し、1 イベントの全発話を出し切ってから次へ (端末またぎの混線防止)。
+        onVoiceEvent: (v) => { void pipeline.enqueue(v); },
         onContact,
       }),
     );

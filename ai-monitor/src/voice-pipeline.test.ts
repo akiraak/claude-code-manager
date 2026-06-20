@@ -173,3 +173,54 @@ test('キー未設定 persona（fallback）でも音声化が進む', async () =
   assert.match(us[0].text, /bar/);
   assert.ok(us[0].audio);
 });
+
+// ---- enqueue 直列化（端末またぎの混線防止） ------------------------------
+
+/** synthesize を ms だけ遅延させる TTS（直列化の検証用に並行なら混線する状況を作る）。 */
+const delayedTts = (ms: number): TtsProvider => ({
+  tag: 'fake',
+  isEnabled: () => true,
+  synthesize: async (t: string, opts) => {
+    await new Promise(r => setTimeout(r, ms));
+    return { bytes: Buffer.from(`wav:${opts?.voice ?? '?'}:${t}`), mime: 'audio/wav' };
+  },
+});
+
+test('enqueue: 直列化して 1 イベントの全発話を出し切ってから次へ（A 全件 → B 全件）', async () => {
+  const store = new VoiceStore();
+  const order: string[] = [];
+  const pipe = new VoicePipeline({
+    persona: twoLinePersona(),
+    tts: delayedTts(10), // TTS 遅延あり: 並行なら A,B,A,B に混線するはず
+    store,
+    onUtterance: u => order.push(u.clientId),
+  });
+  // A と B をほぼ同時に enqueue（await しない）。直列化されれば onUtterance は A 全件 → B 全件。
+  const pa = pipe.enqueue(event({ clientId: 'A' }));
+  const pb = pipe.enqueue(event({ clientId: 'B' }));
+  const [ua, ub] = await Promise.all([pa, pb]);
+  assert.deepEqual(order, ['A', 'A', 'B', 'B']); // 混線しない
+  // 返り値は各イベント分（混ざらない）
+  assert.deepEqual(ua.map(u => u.clientId), ['A', 'A']);
+  assert.deepEqual(ub.map(u => u.clientId), ['B', 'B']);
+  // イベント内は同一 groupId、イベント間は別 groupId
+  assert.equal(ua[0].groupId, ua[1].groupId);
+  assert.notEqual(ua[0].groupId, ub[0].groupId);
+});
+
+test('enqueue: 0 発話イベント（started）を挟んでも順序が保たれチェーンが止まらない', async () => {
+  const store = new VoiceStore();
+  const order: string[] = [];
+  const pipe = new VoicePipeline({
+    persona: twoLinePersona(),
+    tts: delayedTts(5),
+    store,
+    onUtterance: u => order.push(u.clientId),
+  });
+  const pa = pipe.enqueue(event({ clientId: 'A' }));
+  const ps = pipe.enqueue(event({ clientId: 'S', kind: 'started' })); // SPOKEN_KINDS 外 = 0 件
+  const pb = pipe.enqueue(event({ clientId: 'B' }));
+  const [, us] = await Promise.all([pa, ps, pb]);
+  assert.deepEqual(us, []); // started は無音
+  assert.deepEqual(order, ['A', 'A', 'B', 'B']); // S を跨いでも A→B 順は不変
+});
