@@ -68,6 +68,8 @@ upstream への反映は後追いで行う。
 - `./run-voice-client.sh` — client モード (既定 8191。この端末の状態を server へ push)
 - 各スクリプトの停止対象は自モードのみ (`pgrep -f "...--mode <mode>"`) なので互いを巻き込まない。設定の解決順: node (`cli.ts`) が読む設定 (トークン/キー/URL/ラベル/allowlist 等) と、起動スクリプトが解決するポート/ホスト (`CCM_SERVER_HOST`/`CCM_SERVER_PORT`/`CCM_CLIENT_DASH_PORT`) は **env > リポ直下 `.env` > 既定** (ポート/ホストは `run-voice-*.sh` が `.env` を読む。直接 `node` 起動時は `--host`/`--port`)。`SKIP_BUILD`/`CCM_LOG_DIR` のみ **env > 既定**。
 
+新しい **client** 端末は起動前に一度 `./scripts/setup-client.sh` を実行する (権限プロンプト検出 hook の `~/.claude/hooks/` 配置 + `~/.claude/settings.json` への冪等マージ + `.env` 雛形作成。`python3` は絶対パス解決して settings.json に書く。何度実行しても安全)。`local`/`server` のみで使う端末には不要。hook あり/なしの挙動差は下表のとおりで、hook が足すのは Bash/Edit/Write 権限プロンプトの「入力待ち」検出だけ (完了/途中経過/対話ツールの承認待ち音声は hook 非依存)。
+
 ### ダッシュボードの状態バッジ
 
 カード左上のバッジで 1 セッションの現在状態を 4 種類で示す。判定は `ai-monitor/src/state.ts` の `classifyV2`。
@@ -80,7 +82,7 @@ upstream への反映は後追いで行う。
 | 停止     | 灰       | 静止 | CLI 消滅 (24 時間だけ残る = `STOPPED_RETENTION_SEC = 86_400` 秒) |
 
 入力待ち は **明示的なユーザー応答ブロッカーのみ** に限定する方針 (通常の AI ターン終了は 待機中)。
-Bash / Edit / Write 等の Yes/No 権限プロンプトも入力待ちに含めるため、グローバル hook (`~/.claude/hooks/ccm-awaiting-marker.py`) が PermissionRequest 時に `/tmp/claude-code-manager/awaiting-input/<session_id>.json` を置き、PostToolUse / Stop で消す。AI Monitor はそれを読み取り、`fs.watch` で変化を即座に SSE へ反映する。
+Bash / Edit / Write 等の Yes/No 権限プロンプトも入力待ちに含めるため、グローバル hook (`~/.claude/hooks/ccm-awaiting-marker.py`・正本は `ai-monitor/hooks/ccm-awaiting-marker.py`・配置は `scripts/setup-client.sh`) が PermissionRequest 時に `/tmp/claude-code-manager/awaiting-input/<session_id>.json` を置き、PostToolUse / Stop で消す。AI Monitor はそれを読み取り、`fs.watch` で変化を即座に SSE へ反映する。
 `/clear` `/help` `! ls` 等の AI 非介在ローカルコマンドは jsonl の末尾が `system` (`subtype: local_command`) になるため、mtime が新しくても AI処理中 ではなく 待機中 として扱う (誤検知防止)。
 旧 `error` state は、対話ツール選択中に `/exit` した場合と本物のクラッシュを区別できず偽陽性が出るため `stopped` に統合した。
 突き合わせキーは `projectDir` (= `~/.claude/projects/<projectDir>/`)。セッション中に `cd` しても projectDir は不変なので 1 セッションが 1 カードにまとまる。

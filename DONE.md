@@ -1,5 +1,11 @@
 # DONE
 
+- 2026-06-19: 新しいクライアント環境で hook などの初期設定を行う ([plan](docs/plans/archive/new-client-setup.md))
+    - グローバル hook `ccm-awaiting-marker.py`（権限プロンプトの「入力待ち」検出用）がリポ未管理 = 端末ごとの手動配置だった問題を、リポ vendor + 冪等セットアップスクリプトで解消。hook が足すのは Bash/Edit/Write 権限プロンプトの検出 1 点のみで、完了/途中経過/対話ツール承認待ちの音声は hook 非依存（= hook 無しでも鳴る）ことを明文化
+    - Phase 1: hook を `ai-monitor/hooks/ccm-awaiting-marker.py` として正本化（リポ vendor）
+    - Phase 2: `scripts/setup-client.sh`（python3 絶対パス解決 + hook 配置 + `~/.claude/settings.json` の PermissionRequest/PostToolUse/Stop へ冪等マージ（既存 hook 非破壊・二重登録防止・`.bak`）+ `.env` 雛形）
+    - Phase 3: macOS 実機検証（darwin 25.5.0・非破壊）。python3 所在（`/opt/homebrew/bin/python3` 絶対解決）/ ps+lsof プロセス検出（実 2 セッションを cwd 付き検出・zsh スナップショット行は除外・`processes.test.ts` 9/9 pass）/ hook 全イベント（marker 生成・削除・Stop(active) no-op・不正入力 exit 0）/ marker スキーマが reader `awaiting-input.ts` と一致、を確認
+    - Phase 4: `README.md`（hook 節を setup-client.sh 手順 + hook あり/なし比較表に拡充・client 起動フローに導線追加）/ `CLAUDE.md`（動作モード節 + hook 説明に setup-client.sh と vendor 正本を反映）
 - 2026-06-19: macOS (darwin) の claude プロセス検出を実装する（Mac で進捗音声が喋らない原因）([plan](docs/plans/archive/darwin-process-detection.md))
     - darwin 経路がスキャフォルド（常に空配列）のままで Mac の全セッションが常に stopped 扱いになり、状態遷移が起きず進捗音声が一切喋らなかった。`listClaudeProcessesDarwin` を `ps -axww -o pid=,comm=,command=` + `lsof -a -d cwd -p <pids> -Fpn` ベースに実装し `{pid, cwd}` を返すようにした（Linux 経路 = pgrep + /proc は不変）
     - Phase 1: パーサを純関数 `parsePsClaudePids` / `parseLsofCwd` として切り出し、Mac 実機出力ベースの fixture で単体テスト（`processes.test.ts` 新規・9 ケース）。判定は Linux の `isRealClaude` に揃える（comm or argv[0] basename が claude）。ps/lsof 失敗は握って 1 回だけ warn し縮退

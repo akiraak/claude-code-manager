@@ -159,6 +159,8 @@ CCM_SERVER_URL=https://ccm.chobi.me CCM_CLIENT_TOKEN=tok_wsl2_xxxxxxxxxxxxxxxx \
 CCM_MIRROR_PROJECTS=claude-code-manager ./run-voice-client.sh
 ```
 
+> 新しいクライアント端末では、起動前に一度 **`./scripts/setup-client.sh`** を実行する (権限プロンプト検出 hook の配置 + `~/.claude/settings.json` への冪等マージ + `.env` 雛形作成。冪等)。詳細・hook あり/なしの挙動差は [権限プロンプト検出のための hook](#権限プロンプト検出のための-hook) を参照。`local` / `server` モードのみで使う端末には不要。
+
 設定の解決順は対象で分かれる:
 - **node (`cli.ts`) が読む設定** (`CCM_CLIENT_TOKEN(S)` / `CCM_CORS_ORIGIN` / `ANTHROPIC_API_KEY` / `GEMINI_API_KEY` / `GEMINI_TTS_MODEL` / `CCM_VOICE_TTS_PROVIDER` / `CCM_SERVER_URL` / `CCM_CLIENT_LABEL` / `CCM_MIRROR_PROJECTS` / `CCM_DRYRUN`) … **env > リポ直下 `.env` > 既定**（`.env` は `dotenv` が読む。スクリプトは値を上書きせず、env にも `.env` にも無いときだけトークンの開発用デフォルトを注入し警告する＝本番不可）
 - **起動スクリプトが解決するポート/ホスト** (`CCM_SERVER_HOST` / `CCM_SERVER_PORT` / `CCM_CLIENT_DASH_PORT`) … **env > リポ直下 `.env` > 既定**（`run-voice-*.sh` が `.env` も読み `--host`/`--port` で渡す。`cli.ts` 自体は読まないので、直接 `node dist/cli.js` 起動時は `--host`/`--port` で指定する）
@@ -186,13 +188,39 @@ AI Monitor のポートを変える場合は `AI_MONITOR_PORT=<N> ./run-ai-monit
 
 ## 権限プロンプト検出のための hook
 
-`Bash` / `Edit` / `Write` 等のツール実行に対する Yes/No 権限プロンプトを「入力待ち」バッジで検出するために、グローバル hook を 1 つ配置する。
+`Bash` / `Edit` / `Write` 等のツール実行に対する Yes/No 権限プロンプトを「入力待ち」バッジで検出するために、グローバル hook を 1 つ配置する。hook と Claude Code 側の設定はリポ未管理 = 端末ごとの配置が必要なため、**セットアップスクリプトで冪等に行う** (何度実行しても安全)。
 
-- ファイル: `~/.claude/hooks/ccm-awaiting-marker.py`
+```bash
+./scripts/setup-client.sh
+```
+
+スクリプトがやること:
+
+- `python3` の存在確認 + **絶対パス解決** (Homebrew のみの Mac でも hook 起動シェルの PATH に依存しないよう、`/opt/homebrew/bin/python3` 等の絶対パスを settings.json に書く)
+- 正本 `ai-monitor/hooks/ccm-awaiting-marker.py` を `~/.claude/hooks/` へ配置 (+x・差分時のみ上書き・`.bak` 付き)
+- `~/.claude/settings.json` の `PermissionRequest` / `PostToolUse` / `Stop` に hook を冪等マージ (既存 `notify-*.py` 等を壊さない・二重登録しない・`.bak` 付き)
+- `.env` が無ければ `.env.example` から作成し、client モードに必要な値 (`CCM_SERVER_URL` / `CCM_CLIENT_TOKEN` / `CCM_CLIENT_LABEL`) の記入を案内
+
+hook の中身:
+
+- ファイル: `~/.claude/hooks/ccm-awaiting-marker.py` (正本は [`ai-monitor/hooks/ccm-awaiting-marker.py`](ai-monitor/hooks/ccm-awaiting-marker.py)・OS 非依存の純 python)
 - 動作: `PermissionRequest` イベントで `/tmp/claude-code-manager/awaiting-input/<session_id>.json` を作成、`PostToolUse` / `Stop` で削除する
 - AI Monitor は `fs.watch` でその marker ディレクトリを監視し、変化を即座に SSE で UI に反映する
 
-未配置でも AI Monitor 自体は起動するが、Bash / Edit / Write 等の権限プロンプトが「待機中」(黄) のままになり「入力待ち」(オレンジ脈動) が出ない。`AskUserQuestion` / `ExitPlanMode` の検出は jsonl 末尾を直接見るので hook なしでも動く。
+### hook あり / なしの挙動
+
+hook が足すのは **Bash / Edit / Write の権限プロンプトを「入力待ち」として検出する 1 点のみ**。状態バッジ・音声の大半は jsonl + プロセス検出から出るので hook なしでも動く (= 今 hook 無しでも進捗音声は鳴る)。
+
+| 機能 | hook なし | hook あり |
+|---|:---:|:---:|
+| バッジ AI処理中 / 待機中 / 停止 | ✅ | ✅ |
+| バッジ 入力待ち (AskUserQuestion / ExitPlanMode) | ✅ | ✅ |
+| バッジ 入力待ち (Bash / Edit / Write の権限プロンプト) | ❌ | ✅ |
+| 音声: 完了 / 途中経過 | ✅ | ✅ |
+| 音声: 承認待ち (対話ツール: AskUserQuestion / ExitPlanMode) | ✅ | ✅ |
+| 音声: 承認待ち (権限プロンプト) | ❌ | ✅ |
+
+hook 無しで権限プロンプトが保留中のとき、jsonl は tool_use 直後で mtime が新しいためバッジは AI処理中 → 30 秒で 待機中 に落ち、この遷移を「完了」と**誤発話**する (実際は承認待ち)。hook を入れると marker で 承認待ち に強制遷移し、この偽の完了発話を是正する。`AskUserQuestion` / `ExitPlanMode` の検出は jsonl 末尾を直接見るので hook なしでも動く。
 
 ## 開発
 
