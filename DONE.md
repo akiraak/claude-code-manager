@@ -1,5 +1,7 @@
 # DONE
 
+- 2026-06-19: Dashboard 履歴に端末表示 + ログ/読み上げにキャラ名 ([plan](docs/plans/archive/voice-history-terminal-and-character-name.md))
+    - ボイス履歴行に端末 (clientId) チップを追加 (`views.ts` `vh-client`)。サーバのボイスログ行に話者キャラ名 (ちょビ/なるこ) を付与 (`server.ts`・`characterFor(persona, u.speaker).name`)。Dashboard 読み上げ側 (履歴 speaker チップ + 再生中表示) は 2 人会話化 Phase 5 で既出。`views.test.ts` に `vh-client` / `SPEAKER_LABEL` の存在 assert を追加 (159 pass)
 - 2026-06-19: 読み上げが途中で途切れる（文字数制限は生成側で・読み上げは全文）
     - 「ai-twitch-cast に合わせる」Phase 3 で解消。旧 `persona.cleanLine` の 50 字ハード切り詰め（末尾 `…`）を廃止し、長さ制御は生成プロンプト側（1〜2 文・40 字目安）に移した。読み上げ（tts_text）はそのまま全文を読む（暴走防止の安全網 `SPEECH_SAFETY_MAX` のみ・通常は発火しない）
 - 2026-06-19: 読み上げの内容が ai-twitch-cast と違う — 違う箇所を調査と整理 ([plan](docs/plans/voice-content-diff-vs-ai-twitch-cast.md))

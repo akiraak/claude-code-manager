@@ -12,6 +12,6 @@
   - [x] Phase 7a: テスト（159 pass）+ ドキュメント（CLAUDE.md）
   - [ ] Phase 7b: 手動 E2E（実 client→server→ブラウザで 2 人会話の順次再生・要 API キー）+ プラン archive
 
-- [ ] Dashboard の履歴にも端末を表示する
 - [ ] ./run-ai-monitor.sh に run-voice-server.sh の機能を入れる
 - [ ] クライアントプロセスのターミナルへの表示を増やす。案を出す
+- [ ] 端末ごとの会話が混じっているように聞こえる。調査して

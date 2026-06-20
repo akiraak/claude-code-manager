@@ -4,7 +4,7 @@ import { assertServerAuthConfigured, bearerAuth } from './auth';
 import { ensureAwaitingInputDir, watchAwaitingInputMarkers } from './awaiting-input';
 import { LocalEntrySource, type EntrySource } from './entry-source';
 import { Cooldown, createIngestRouter, RateLimiter } from './ingest';
-import { loadPersona, PersonaGenerator } from './persona';
+import { characterFor, loadPersona, PersonaGenerator } from './persona';
 import { decodeId, type ActivityState, type MonitorEntry } from './state';
 import { AggregateStore } from './store';
 import { Summarizer } from './summarize';
@@ -152,7 +152,9 @@ export function startServer(opts: ServerOptions, source: EntrySource = new Local
         const time = new Date().toLocaleTimeString('ja-JP', { hour12: false });
         const proj = u.projectName ?? u.projectDir;
         const audio = u.audio ? '🔊' : '(no-audio)';
-        console.log(`[ai-monitor] voice ▶ ${time} [${u.kind}] ${proj} <${u.clientId}> ${audio} ${u.text}`);
+        const who = u.speaker ? characterFor(persona, u.speaker).name : '';
+        const said = who ? `${who}: ${u.text}` : u.text;
+        console.log(`[ai-monitor] voice ▶ ${time} [${u.kind}] ${proj} <${u.clientId}> ${audio} ${said}`);
         for (const fn of voiceListeners) {
           try { fn(u); } catch { /* リスナのエラーは握りつぶす */ }
         }

@@ -354,6 +354,10 @@ test('renderDashboard: voice:true で voice パネル / スクリプト / 配信
   assert.match(html, /ccm-voice-client/);
   // voice 専用 CSS
   assert.match(html, /\.voice-bar/);
+  // 履歴行が端末 (clientId) + 話者キャラ名を出すフック
+  assert.match(html, /vh-client/);
+  assert.match(html, /SPEAKER_LABEL/);
+  assert.match(html, /teacher:\s*'ちょビ'/);
 });
 
 test('renderDashboard: 既定 (voice 指定なし) では voice パネルもスクリプトも出ない (後方互換)', () => {

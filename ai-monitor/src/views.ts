@@ -365,6 +365,7 @@ const VOICE_STYLE = `
 .vh-kind-completed { background: #d4edda; color: #1b6e3a; }
 .vh-kind-awaiting  { background: #ffe0b2; color: #bf360c; }
 .vh-kind-progress  { background: #e3f2fd; color: #1565c0; }
+.vh-client { flex: 0 0 auto; color: #455a64; font-size: 10px; background: #eceff1; padding: 1px 6px; border-radius: 3px; }
 .vh-proj { flex: 0 0 auto; color: #888; font-size: 11px; }
 .vh-speaker { flex: 0 0 auto; font-size: 10px; font-weight: 600; padding: 1px 6px; border-radius: 3px; }
 .vh-speaker-teacher { background: #ede7f6; color: #5e35b1; }
@@ -1184,6 +1185,7 @@ const DASHBOARD_VOICE_SCRIPT = `
       html += '<div class="vh-row">'
         + '<span class="vh-time">' + esc(fmtTime(m.createdAtMs)) + '</span>'
         + '<span class="vh-kind vh-kind-' + esc(m.kind) + '">' + esc(KIND_LABEL[m.kind] || m.kind) + '</span>'
+        + (m.clientId ? '<span class="vh-client">' + esc(m.clientId) + '</span>' : '')
         + (m.projectName ? '<span class="vh-proj">' + esc(m.projectName) + '</span>' : '')
         + (m.speaker ? '<span class="vh-speaker vh-speaker-' + esc(m.speaker) + '">' + esc(SPEAKER_LABEL[m.speaker] || m.speaker) + '</span>' : '')
         + (m.emotion && m.emotion !== 'neutral' ? '<span class="vh-emotion">' + esc(m.emotion) + '</span>' : '')
