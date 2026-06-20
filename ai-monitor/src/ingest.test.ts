@@ -69,6 +69,19 @@ test('validateVoiceEvent: detail を上限で切り詰める', () => {
   if (r.ok) assert.ok(r.value.detail!.length <= 500);
 });
 
+test('validateVoiceEvent: eventId は通し・長すぎ/型不正は弾く・欠落は undefined', () => {
+  const ok = validateVoiceEvent(validVoiceBody({ eventId: 'abc-123' }));
+  assert.equal(ok.ok, true);
+  if (ok.ok) assert.equal(ok.value.eventId, 'abc-123');
+  // 欠落は許容 (旧クライアント後方互換) → undefined
+  const none = validateVoiceEvent(validVoiceBody());
+  assert.equal(none.ok, true);
+  if (none.ok) assert.equal(none.value.eventId, undefined);
+  // 型不正 / 長すぎは弾く
+  assert.equal(validateVoiceEvent(validVoiceBody({ eventId: 123 })).ok, false);
+  assert.equal(validateVoiceEvent(validVoiceBody({ eventId: 'x'.repeat(129) })).ok, false);
+});
+
 test('validateVoiceEvent: context を型・配列長・各要素長で安全化する', () => {
   const r = validateVoiceEvent(
     validVoiceBody({

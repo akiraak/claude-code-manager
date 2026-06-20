@@ -1073,6 +1073,11 @@ const DASHBOARD_VOICE_SCRIPT = `
 
   var bar = document.querySelector('[data-voice-bar]');
   if (!bar) return;
+  // 二重初期化ガード: スクリプトが同一ドキュメントに 2 度注入されても EventSource を
+  // 重複生成しない (voice-utterance listener が 2 つ = 同じ発話を 2 回再生する事故を防ぐ)。
+  // 別タブ/iframe は別 window なので対象外 (仕様上の利用者起因)。
+  if (window.__ccmVoiceInit) return;
+  window.__ccmVoiceInit = true;
   var toggleBtn = document.querySelector('[data-voice-toggle]');
   var volEl = document.querySelector('[data-voice-volume]');
   var clientSel = document.querySelector('[data-voice-client]');
@@ -1107,6 +1112,20 @@ const DASHBOARD_VOICE_SCRIPT = `
   var audio = new Audio();
   audio.preload = 'auto';
 
+  // --- 再生済み id の重複排除 (同一 utterance が二重配信されても 1 回しか鳴らさない) ---
+  // 二重初期化ガードで配信元の重複は防ぐが、保険として再生キュー側でも id を覚える。
+  // 履歴の「再生」(playNow) は明示操作なので対象外 (既見でも鳴らす)。
+  var SEEN_ID_MAX = 500;
+  var seenIds = {};         // 投入済み id の集合
+  var seenOrder = [];       // FIFO 退避用 (肥大防止)
+  function markSeenId(id) {
+    if (!id || seenIds[id]) return false;   // 既見 = 投入しない
+    seenIds[id] = true;
+    seenOrder.push(id);
+    if (seenOrder.length > SEEN_ID_MAX) { delete seenIds[seenOrder.shift()]; }
+    return true;
+  }
+
   function applyToggleUI() {
     toggleBtn.setAttribute('aria-pressed', enabled ? 'true' : 'false');
     toggleBtn.textContent = enabled ? '🔊 音声 ON' : '🔇 音声 OFF';
@@ -1133,6 +1152,7 @@ const DASHBOARD_VOICE_SCRIPT = `
   // --- 再生 (単一 audio + キュー) ---
   function enqueue(meta) {
     if (!enabled || !meta.hasAudio || !passes(meta)) return;
+    if (!markSeenId(meta.id)) return;   // 既に投入済みの id は二重再生しない
     queue.push(meta);
     pump();
   }

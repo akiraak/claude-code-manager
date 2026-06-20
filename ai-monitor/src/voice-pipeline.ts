@@ -20,6 +20,49 @@ import type { Utterance, VoiceStore } from './voice-store';
 /** 音声化する種別（既定）。`started` は除外。 */
 export const SPOKEN_KINDS: readonly VoiceEventKind[] = ['awaiting', 'completed', 'progress'];
 
+/** 処理済み eventId を覚えておく既定 TTL（lost-ack 再送の間隔より十分長く）。 */
+export const DEFAULT_SEEN_EVENT_TTL_MS = 600_000; // 10 分
+/** 処理済み eventId の保持件数上限（流量から見て十分。超過は古い順に間引く）。 */
+export const DEFAULT_SEEN_EVENT_MAX = 500;
+
+/**
+ * 処理済み eventId の TTL + 件数上限つきセット。lost-ack 再送（同一 eventId）を「既知」と
+ * 判定して会話の二重生成を防ぐ。期限切れ・件数超過は古い順に捨てる（best-effort 冪等）。
+ */
+export class SeenEventIds {
+  /** eventId → 失効時刻(ms)。Map の挿入順を FIFO 退避に使う。 */
+  private readonly map = new Map<string, number>();
+
+  constructor(
+    private readonly ttlMs: number = DEFAULT_SEEN_EVENT_TTL_MS,
+    private readonly max: number = DEFAULT_SEEN_EVENT_MAX,
+  ) {}
+
+  /**
+   * `id` が既知（未失効）なら true を返す（処理をスキップさせる）。
+   * 未知 or 失効済みなら記録して false を返す（= これから処理する）。
+   */
+  seen(id: string, nowMs: number): boolean {
+    const exp = this.map.get(id);
+    if (exp !== undefined && exp > nowMs) return true;
+    // 未知 or 失効 → 記録（失効していた古いエントリは上書き）。
+    this.map.set(id, nowMs + this.ttlMs);
+    if (this.map.size > this.max) {
+      const overflow = this.map.size - this.max;
+      let n = 0;
+      for (const k of this.map.keys()) {
+        this.map.delete(k);
+        if (++n >= overflow) break;
+      }
+    }
+    return false;
+  }
+
+  size(): number {
+    return this.map.size;
+  }
+}
+
 /**
  * env `CCM_VOICE_SPOKEN_KINDS`（csv）を読み上げ種別の配列にする純関数。
  * - 未設定/空/全て不正 → 既定 {@link SPOKEN_KINDS} にフォールバック（typo で全無音にならないよう fail-safe）。
@@ -50,6 +93,10 @@ export interface VoicePipelineDeps {
    * `started` は要件上どの設定でも読み上げない（既定に含まれない）。
    */
   spokenKinds?: readonly VoiceEventKind[];
+  /** 処理済み eventId を覚えておく TTL(ms)。既定 {@link DEFAULT_SEEN_EVENT_TTL_MS}。 */
+  seenEventTtlMs?: number;
+  /** 処理済み eventId の保持件数上限。既定 {@link DEFAULT_SEEN_EVENT_MAX}。 */
+  seenEventMax?: number;
 }
 
 function errMsg(err: unknown): string {
@@ -63,6 +110,8 @@ export class VoicePipeline {
   private readonly now: () => number;
   private readonly onUtterance: (u: Utterance) => void;
   private readonly spokenKinds: ReadonlySet<VoiceEventKind>;
+  /** lost-ack 再送 (同一 eventId) の二重生成を防ぐ冪等セット。 */
+  private readonly seen: SeenEventIds;
   /** {@link enqueue} の直列化チェーン。前イベントの全 utterance を出し切ってから次へ。 */
   private chain: Promise<void> = Promise.resolve();
 
@@ -73,6 +122,7 @@ export class VoicePipeline {
     this.now = deps.now ?? (() => Date.now());
     this.onUtterance = deps.onUtterance ?? (() => { /* noop */ });
     this.spokenKinds = new Set(deps.spokenKinds ?? SPOKEN_KINDS);
+    this.seen = new SeenEventIds(deps.seenEventTtlMs, deps.seenEventMax);
   }
 
   /**
@@ -95,6 +145,13 @@ export class VoicePipeline {
   async handle(event: VoiceEventPayload): Promise<Utterance[]> {
     try {
       if (!this.spokenKinds.has(event.kind)) return [];
+
+      // 冪等化: 同一 eventId を 2 度処理しない (lost-ack 再送 / 二重 ingest を吸収)。
+      // eventId 欠落 (旧クライアント) は dedup せず従来どおり生成する (取りこぼしより重複許容)。
+      // progress も eventId は発話ごとにユニークなので、周期通知が誤って抑制されることはない。
+      if (event.eventId !== undefined && this.seen.seen(event.eventId, this.now())) {
+        return [];
+      }
 
       const persona = this.persona.getPersona();
       const lastConversation = this.store.recentTextsForSession(

@@ -1,3 +1,4 @@
+import { randomUUID } from 'crypto';
 import path from 'path';
 
 import { watchAwaitingInputMarkers } from './awaiting-input';
@@ -266,6 +267,13 @@ export interface VoiceEventOut {
   state: ActivityState;
   /** 2 人会話の素になる作業コンテキスト。 */
   context?: VoiceEventContext;
+  /**
+   * イベント単位の冪等キー。**enqueue 直前に 1 回だけ採番**し、`flush()` の lost-ack
+   * 再送 (timeout/5xx/cooldown 429 後) をまたいで不変にする。server はこれで「ack が
+   * 失われて再送された同一イベント」を判定し、会話の二重生成 (別 groupId) を防ぐ。
+   * 旧クライアントは未設定 → server は dedup せず従来動作 (重複許容 > 取りこぼし)。
+   */
+  eventId?: string;
 }
 
 /** セッション入力 + 経過分から会話 context を組み立てる（空なら undefined）。 */
@@ -792,6 +800,9 @@ export function createUplinkRunner(config: ClientConfig, deps: UplinkRunnerDeps 
         };
       });
       for (const ev of detector.observe(inputs, now())) {
+        // 冪等キーをここで 1 回だけ採番する。flush は同一 ev を再送するので、lost-ack
+        // 再送をまたいで eventId は不変になり、server が同一イベントとして dedup できる。
+        ev.eventId = randomUUID();
         log(formatTransitionLine(ev)); // 案A: 遷移をライブ表示
         queue.enqueue(ev);
       }

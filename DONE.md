@@ -1,5 +1,12 @@
 # DONE
 
+- 2026-06-20: 同じ会話が２回流れるバグ ([plan](docs/plans/archive/voice-duplicate-playback.md))
+    - 原因を 2 系統に切り分け、多層防御で両方塞いだ。**T1**: server に voice-event の冪等性が無く、lost-ack 再送 (cooldown 429 後の再送含む) で同一イベントから会話が二重生成される (別 `groupId` のため client 側 dedup では消せない)。**T2**: client 再生キューに seen-id dedup が無く、同一 utterance が二重配信されると 2 回鳴る
+    - **Phase 1 (server 冪等化・主対策)**: `VoiceEventOut`/`VoiceEventPayload` に `eventId` を追加し、**enqueue 直前に 1 回だけ** `randomUUID()` で採番 (`uplink.ts`)。`flush()` は同一 `ev` を再送するので eventId は再送をまたいで不変 → server が同一イベントと判定できる。`ingest.ts` で型/長さ検証 (≤128字)。`VoicePipeline` に TTL(10分)+件数上限(500) の `SeenEventIds` を持たせ、`handle()` の spokenKinds ゲート後に既知 eventId をスキップ。eventId 欠落 (旧クライアント) は dedup せず従来生成 (取りこぼしより重複許容)
+    - **Phase 2 (client 二重防御)**: `views.ts` の `DASHBOARD_VOICE_SCRIPT` に (a) `window.__ccmVoiceInit` 二重初期化ガード (EventSource 重複生成 = listener 二重を防止)、(b) 再生キュー投入時の seen-id dedup (FIFO 上限 500) を追加。履歴の「再生」(`playNow`) は明示操作なので対象外
+    - Phase 0 (どちらが主因かのライブ再現) は未実施。静的解析で両ギャップを file:line 付きで特定済みで、多層で両方塞いだため主因確定は不要と判断
+    - 検証: `npm run build` 緑 / `npm test` 184 件 pass (新規: lost-ack 再送で eventId 不変・eventId 検証・pipeline 冪等化 4 件・SeenEventIds 2 件)
+
 - 2026-06-20: イベントが別の音声の場合は間を少し開ける ([plan](docs/plans/archive/voice-inter-event-gap.md))
     - ダッシュボードの順次再生 (`views.ts` の `DASHBOARD_VOICE_SCRIPT`) で、連続する発話の `groupId` が変わる (= 別イベントに移る) ときだけ短い無音 `GROUP_GAP_MS`(700ms) を挟むようにした。同一イベント内 (2〜4 発話) は連続再生のまま
     - `lastGroupId` で直近再生グループを保持し、`pump()` で groupId 違いなら `setTimeout` で待ってから `play()` (無音中も `playing=true` で二重 pump 抑止・`gapTimer` で保持)。`done()` でキューが空になったら `lastGroupId` を null に戻し、無音明けの最初の発話は待たせない (= イベント連続時だけ間が入る)

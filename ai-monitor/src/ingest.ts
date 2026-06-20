@@ -23,6 +23,8 @@ export const MAX_EVENTS = 200;
 const MAX_CLIENT_ID = 128;
 const MAX_PROJECT_DIR = 512;
 const MAX_DETAIL = 500;
+// 冪等キー。randomUUID は 36 字だが将来の採番方式に余裕を持たせて 128 字まで許可する。
+const MAX_EVENT_ID = 128;
 // 2 人会話の素 context。配列長・各要素長を制限して payload 暴発を防ぐ。
 const MAX_CONTEXT_USER_PROMPT = 300;
 const MAX_CONTEXT_ITEM = 200;
@@ -111,6 +113,9 @@ export function validateVoiceEvent(body: unknown): ValidationResult<VoiceEventPa
   if (body.state != null && !ACTIVITY_STATES.includes(body.state as ActivityState)) {
     return { ok: false, error: 'state invalid' };
   }
+  if (body.eventId != null && !isNonEmptyString(body.eventId, MAX_EVENT_ID)) {
+    return { ok: false, error: 'eventId invalid' };
+  }
 
   const detail = typeof body.detail === 'string' ? body.detail.slice(0, MAX_DETAIL) : undefined;
   const value: VoiceEventPayload = {
@@ -123,6 +128,7 @@ export function validateVoiceEvent(body: unknown): ValidationResult<VoiceEventPa
     projectName: typeof body.projectName === 'string' ? body.projectName : undefined,
     state: body.state as ActivityState | undefined,
     context: sanitizeContext(body.context),
+    eventId: typeof body.eventId === 'string' ? body.eventId : undefined,
   };
   return { ok: true, value };
 }

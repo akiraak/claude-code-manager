@@ -347,6 +347,31 @@ test('VoiceEventQueue: 満杯時は最古を捨てる', async () => {
   assert.equal(q.size(), 2);
 });
 
+test('VoiceEventQueue: lost-ack 再送をまたいで eventId が不変 (sentAt は更新)', async () => {
+  let nowMs = 0;
+  const sent: Array<{ eventId?: string; sentAt?: string }> = [];
+  const outcomes: PostOutcome[] = [{ ok: false, retryable: true }, { ok: true }];
+  let i = 0;
+  const poster: Poster = async (_p, body) => {
+    sent.push(body as { eventId?: string; sentAt?: string });
+    return outcomes[Math.min(i++, outcomes.length - 1)];
+  };
+  const q = new VoiceEventQueue({
+    poster, clientId: 'c', now: () => nowMs, baseBackoffMs: 1000, log: () => {},
+  });
+  // eventId は tick 側で 1 回採番され ev に載る。flush は同一 ev を再送する。
+  q.enqueue(voiceOut({ eventId: 'E1' }));
+  await q.flush();        // 1 回目: retryable (= ack 喪失相当) → キューに残る
+  assert.equal(q.size(), 1);
+  nowMs = 1000;           // バックオフ明け
+  await q.flush();        // 2 回目: 成功 (再送)
+  assert.equal(q.size(), 0);
+  assert.equal(sent.length, 2);
+  assert.equal(sent[0].eventId, 'E1');
+  assert.equal(sent[1].eventId, 'E1');             // 再送でも eventId 不変 → server が dedup 可能
+  assert.notEqual(sent[0].sentAt, sent[1].sentAt); // sentAt は送信ごとに更新される
+});
+
 interface VoiceEventPayloadLike {
   clientId: string;
   kind: string;

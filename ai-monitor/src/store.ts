@@ -62,6 +62,12 @@ export interface VoiceEventPayload {
    * ai-twitch-cast の `summary` 相当。ingest で配列長・各文字数が検証される。
    */
   context?: VoiceEventContext;
+  /**
+   * イベント単位の冪等キー (クライアントが採番。lost-ack 再送をまたいで不変)。
+   * server はこれで再送された同一イベントを判定し、会話の二重生成を防ぐ。
+   * 旧クライアントは未設定 → server は dedup せず従来どおり生成する。
+   */
+  eventId?: string;
 }
 
 /** voice-event に載せる作業コンテキスト (会話台本生成の入力)。 */
