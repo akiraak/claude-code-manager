@@ -177,6 +177,32 @@ test('VoiceEventDetector: ai-processing → stopped は発話しない', () => {
   assert.deepEqual(d.observe([sess('stopped')], 10), []);
 });
 
+test('VoiceEventDetector: ローカルコマンド終端 (endsWithLocalCommand) は completed を発話しない', () => {
+  const d = new VoiceEventDetector();
+  d.observe([sess('waiting')], 0); // baseline
+  d.observe([sess('ai-processing', { lastUserText: 'do it' })], 10); // started
+  // 完了後 30 秒窓内に /clear 等を叩くと ai-processing→waiting に倒れるが endsWithLocalCommand=true。
+  const ev = d.observe([
+    sess('waiting', { lastAssistantText: 'できました', lastAssistantAt: 'tA', endsWithLocalCommand: true }),
+  ], 20);
+  assert.deepEqual(ev, []); // 前倒し completed を抑制する
+  // state は waiting に前進しているので、次の正規ターンは started から始まる (machine を壊さない)。
+  const started = d.observe([sess('ai-processing', { lastUserText: 'next' })], 30);
+  assert.equal(started.length, 1);
+  assert.equal(started[0].kind, 'started');
+});
+
+test('VoiceEventDetector: ローカルコマンドでない通常完了は従来どおり completed を出す', () => {
+  const d = new VoiceEventDetector();
+  d.observe([sess('waiting')], 0); // baseline
+  d.observe([sess('ai-processing')], 10); // started
+  const ev = d.observe([
+    sess('waiting', { lastAssistantText: '完了', endsWithLocalCommand: false }),
+  ], 20);
+  assert.equal(ev.length, 1);
+  assert.equal(ev[0].kind, 'completed');
+});
+
 test('VoiceEventDetector: ai-processing 継続で progress を周期的に出す', () => {
   const d = new VoiceEventDetector({ progressAfterMs: 100, progressEveryMs: 50 });
   d.observe([sess('waiting')], 0);

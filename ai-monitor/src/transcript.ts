@@ -20,6 +20,14 @@ export interface NormalizedEvent {
   isMeta?: boolean;
   /** kind === 'system' のときの subtype (例: 'local_command')。state 判定で参照する。 */
   systemSubtype?: string;
+  /**
+   * kind === 'user-text' で、元データが AI 非介在のローカルコマンド由来か
+   * (`<command-name>/clear</command-name>` や `<local-command-stdout>` の包み)。
+   * `text` は {@link formatUserMessageForDisplay} で `/clear` 等へ整形済みなので、整形後の
+   * 文字列からはコマンド痕跡を判別できない。発話 context ({@link extractWorkContext}) で
+   * コマンド文字列やシェル出力を `userPrompt` に混入させないための判別フラグ。
+   */
+  isLocalCommand?: boolean;
 }
 
 export interface TranscriptInfo {
@@ -181,6 +189,18 @@ function formatUserMessageForDisplay(raw: string): string {
   return raw;
 }
 
+/**
+ * user メッセージの **整形前 raw** が AI 非介在のローカルコマンド由来か
+ * (`<command-name>...` のスラッシュコマンド包み / `<local-command-stdout>...` のシェル出力)。
+ *
+ * {@link formatUserMessageForDisplay} が `/clear` 等へ整形した後では判別できないため、
+ * 整形と同じ raw を見てフラグ ({@link NormalizedEvent.isLocalCommand}) を立てるのに使う。
+ */
+function isLocalCommandRaw(raw: string): boolean {
+  return /<command-name>[\s\S]*?<\/command-name>/.test(raw)
+    || /<local-command-stdout>[\s\S]*?<\/local-command-stdout>/.test(raw);
+}
+
 /** message.content から表示用のテキストを 1 つ取り出す (短くトリミングは呼び出し側で行う)。 */
 function stringifyToolResultContent(content: unknown): string {
   if (typeof content === 'string') return content;
@@ -243,7 +263,7 @@ export function readTailEvents(jsonlPath: string, limit = 200): NormalizedEvent[
       const msg = obj.message as { content?: unknown } | undefined;
       const content = msg?.content;
       if (typeof content === 'string') {
-        out.push({ kind: 'user-text', timestamp, text: formatUserMessageForDisplay(content), isMeta });
+        out.push({ kind: 'user-text', timestamp, text: formatUserMessageForDisplay(content), isMeta, isLocalCommand: isLocalCommandRaw(content) });
       } else if (Array.isArray(content)) {
         for (const item of content) {
           if (!item || typeof item !== 'object') continue;
@@ -258,7 +278,7 @@ export function readTailEvents(jsonlPath: string, limit = 200): NormalizedEvent[
           } else if (it.type === 'text') {
             const t = (it as { text?: string }).text;
             if (typeof t === 'string') {
-              out.push({ kind: 'user-text', timestamp, text: formatUserMessageForDisplay(t), isMeta });
+              out.push({ kind: 'user-text', timestamp, text: formatUserMessageForDisplay(t), isMeta, isLocalCommand: isLocalCommandRaw(t) });
             }
           }
         }
@@ -472,9 +492,12 @@ export function extractWorkContext(events: NormalizedEvent[]): WorkContext {
   const actions: string[] = [];
   const notes: string[] = [];
   for (const ev of events) {
-    if (ev.kind === 'user-text' && !ev.isMeta) {
+    if (ev.kind === 'user-text' && !ev.isMeta && !ev.isLocalCommand) {
+      // ローカルコマンド (`/clear` `! ls` 等) は `isLocalCommand` で除外する。text は
+      // 整形済み (`/clear` / シェル出力) で痕跡が消えているため、文字列の startsWith では
+      // 判別できない (旧ガードは空振りしていた)。
       const t = ev.text?.trim();
-      if (t && !t.startsWith('<command-name>') && !t.startsWith('<local-command')) userPrompt = t;
+      if (t) userPrompt = t;
     } else if (ev.kind === 'tool-use') {
       const a = describeToolUse(ev);
       if (a) actions.push(a);

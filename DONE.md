@@ -1,5 +1,11 @@
 # DONE
 
+- 2026-06-20: コマンド（/clear）などは発話しないようにしても問題ないか調査 ([plan](docs/plans/archive/voice-suppress-local-commands.md))
+    - 調査結論: ローカルコマンド（`/clear` `/help` `! ls`）の読み上げは**抑制してよい**。発話を起こすのは「完了後 30 秒の鮮度窓内にコマンドを叩き ai-processing→waiting に倒れて completed が前倒し発火する」1 ケースのみ（窓外のアイドル時コマンドは遷移なし＝既に無音）。コマンドを打つ＝そのセッションの手元に居るので音声不要・検出は projectDir 単位で他端末に影響なし
+    - 副次バグも発見: `extractWorkContext` のコマンド除外ガード（`startsWith('<command-name>')`）が、`readTailEvents` の整形（`/clear` へ変換）後では空振りし、発話 context の `userPrompt` にコマンド文字列/シェル出力が混入していた
+    - ユーザー判断で **対応 A + B 両方を実装**（env ON/OFF は付けず常に抑制）。**A**(`uplink.ts`): `VoiceSessionInput.endsWithLocalCommand` を通し、`observe` の遷移分岐でローカルコマンド終端は emit せず state だけ前進。**B**(`transcript.ts`): `NormalizedEvent.isLocalCommand` を `readTailEvents` で整形前 raw から付与し、`extractWorkContext` の除外をフラグ判定に置換
+    - 検証: `npx tsc --noEmit` 緑 / `npm test` 175 件 pass（新規テスト: 抑制・通常完了・isLocalCommand 付与・userPrompt 非上書き）
+
 - 2026-06-20: 読み上げの頻度が高すぎるので調整する ([調査plan](docs/plans/archive/voice-frequency-investigation.md) / [試験運用①plan](docs/plans/archive/voice-progress-off-trial.md))
     - 調査で発話内訳を実測 (543 発話 / 193 分: **completed 80% / progress 13% / awaiting 7%**・ピーク 14 発話/分)。主因は「completed が毎ターン完了で発火」、大半は 2 分未満の短ターン。awaiting(7%) は人間の応答待ち＝最重要なので**間引かない**方針を確定
     - 調整レバーを 5 案評価 (3-1 完了の作業量ゲート=主軸 / 3-4 progress 間隔延長 / 3-2 session cooldown=補助 / 3-3 全体レート制限=awaiting を削るリスクで見送り寄り / 3-5 awaiting 据え置き)

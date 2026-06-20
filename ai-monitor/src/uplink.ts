@@ -248,6 +248,13 @@ export interface VoiceSessionInput {
    * (揺れ=同一 timestamp / 別ターン=新 timestamp)。送信はしない (client 内 dedup 専用)。
    */
   lastAssistantAt?: string;
+  /**
+   * 末尾が AI 非介在のローカルコマンド (`/clear`, `! ls` 等) か ({@link TailSummary.endsWithLocalCommand})。
+   * true のときは遷移があっても発話イベントを出さない (完了後 30 秒の鮮度窓内にコマンドを
+   * 叩くと ai-processing→waiting に倒れて completed が前倒し発火するが、コマンドを打った
+   * = そのセッションの手元に居るので読み上げ不要)。送信はせず client 内の抑制のみに使う。
+   */
+  endsWithLocalCommand?: boolean;
 }
 
 export interface VoiceEventOut {
@@ -347,7 +354,11 @@ export class VoiceEventDetector {
       }
 
       if (s.state !== prev.state) {
-        const ev = transitionEvent(prev.state, s);
+        // ローカルコマンド (`/clear` `! ls` 等) 終端での遷移は発話しない。完了後 30 秒の
+        // 鮮度窓内にコマンドを叩くと ai-processing→waiting に倒れて completed が前倒し
+        // 発火するが、コマンドを打った = 手元に居るので不要。state は下で記録だけする
+        // (machine は前進させるので、窓が切れた後の正規遷移は従来どおり扱える)。
+        const ev = s.endsWithLocalCommand ? null : transitionEvent(prev.state, s);
         if (ev) ev.context = buildVoiceContext(s, elapsedMinSince(prev.aiSinceMs, nowMs));
         let lastSpokenSig = prev.lastSpokenSig;
         if (ev) {
@@ -776,6 +787,8 @@ export function createUplinkRunner(config: ClientConfig, deps: UplinkRunnerDeps 
           // dedup 用のターン識別子 (最後の assistant メッセージの timestamp)。
           // 揺れ=同一 timestamp / 別ターン=新 timestamp。送信はせず client 内 dedup のみに使う。
           lastAssistantAt: e.tail?.lastAssistantAt,
+          // ローカルコマンド終端なら遷移を発話しない (client 内の抑制のみ・送信しない)。
+          endsWithLocalCommand: e.tail?.endsWithLocalCommand,
         };
       });
       for (const ev of detector.observe(inputs, now())) {

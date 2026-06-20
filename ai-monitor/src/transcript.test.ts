@@ -8,6 +8,7 @@ import {
   describeToolUse,
   extractWorkContext,
   findLastUserText,
+  readTailEvents,
   type NormalizedEvent,
 } from './transcript';
 
@@ -36,17 +37,40 @@ test('describeToolUse: ツールごとに人間可読なアクション文を作
 
 test('extractWorkContext: userPrompt / actions / notes を順序保持で抽出する', () => {
   const events: NormalizedEvent[] = [
-    ev({ kind: 'user-text', text: '<command-name>/clear' }), // コマンドはスキップ
     ev({ kind: 'user-text', text: 'バグを直して' }),
     ev({ kind: 'tool-use', toolName: 'Read', text: JSON.stringify({ file_path: '/a/b/foo.ts' }) }),
     ev({ kind: 'assistant-text', text: '原因はこのあたりにありそうです' }),
     ev({ kind: 'assistant-text', text: '短い' }), // 10 字以下はメモにしない
     ev({ kind: 'tool-use', toolName: 'Bash', text: JSON.stringify({ command: 'npm test' }) }),
+    // /clear は readTailEvents が `/clear` へ整形済みで text からは判別できない。isLocalCommand
+    // フラグで除外する。末尾に置いても userPrompt を上書きしないことを確認 (旧 startsWith ガードは空振り)。
+    ev({ kind: 'user-text', text: '/clear', isLocalCommand: true }),
   ];
   const c = extractWorkContext(events);
-  assert.equal(c.userPrompt, 'バグを直して');
+  assert.equal(c.userPrompt, 'バグを直して'); // 末尾の /clear で上書きされない
   assert.deepEqual(c.actions, ['ファイル読み取り: foo.ts', 'コマンド実行: npm test']);
   assert.deepEqual(c.notes, ['原因はこのあたりにありそうです']);
+});
+
+test('readTailEvents: ローカルコマンド由来の user-text に isLocalCommand を立てる', () => {
+  const file = mkTmpJsonl('local-cmd.jsonl');
+  writeLines(file, [
+    assistantText('開始', 't0'), // tail 先頭行は切り捨てられるためダミー
+    userText('ふつうの指示', 't1'),
+    userText('<command-name>/clear</command-name>\n<command-message>clear</command-message>\n<command-args></command-args>', 't2'),
+    userText('<local-command-stdout>foo.txt\nbar.txt</local-command-stdout>', 't3'),
+  ]);
+  const users = readTailEvents(file, 50).filter(e => e.kind === 'user-text');
+  assert.equal(users.length, 3);
+  // 通常テキストはフラグを立てない。
+  assert.equal(users[0].text, 'ふつうの指示');
+  assert.ok(!users[0].isLocalCommand);
+  // スラッシュコマンドは `/clear` へ整形しつつフラグを立てる。
+  assert.equal(users[1].text, '/clear');
+  assert.equal(users[1].isLocalCommand, true);
+  // シェル出力は stdout を抽出しつつフラグを立てる。
+  assert.equal(users[2].text, 'foo.txt\nbar.txt');
+  assert.equal(users[2].isLocalCommand, true);
 });
 
 function mkTmpJsonl(name: string): string {
