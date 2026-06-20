@@ -41,17 +41,18 @@ upstream への反映は後追いで行う。
 
 ## AI Monitor (vibeboard customTabs プラグイン)
 
-稼働中の Claude Code CLI を vibeboard 上で可視化するためのサーバ。`./ai-monitor/` に実装がある。`run-ai-monitor.sh` が vibeboard と一緒に起動する（別プロセス）。
+稼働中の Claude Code CLI を vibeboard 上で可視化するためのサーバ。`./ai-monitor/` に実装がある。`run-ai-monitor.sh` が ai-monitor を **server モード (集約 + 音声 + ミラー)** で vibeboard と一緒に起動する（別プロセス）。
 
 ```bash
-# 起動 (vibeboard 8180 + ai-monitor 8181 をまとめて立ち上げる。
+# 起動 (vibeboard 8180 + ai-monitor server 8190 をまとめて立ち上げる。
 #       依存インストール + ビルドもスクリプト内で実施)
 ./run-ai-monitor.sh
 ```
 
-- `vibeboard.config.json` の `customTabs` に AI Monitor のエントリ（`baseUrl: http://127.0.0.1:8181`）を登録済み。vibeboard 起動時に **AI Monitor** タブとして読み込まれる
-- `run-ai-monitor.sh` は既に起動中の vibeboard / ai-monitor を `pgrep -f` で検出し、停止してから起動し直す
-- ポート変更は `VIBEBOARD_PORT` / `AI_MONITOR_PORT` 環境変数で指定可能。AI Monitor 側を変えた場合は `vibeboard.config.json` の `baseUrl` も合わせる
+- `vibeboard.config.json` の `customTabs` に AI Monitor のエントリ（`baseUrl: http://127.0.0.1:8190`）を登録済み。vibeboard 起動時に **AI Monitor** タブ（= server の音声つきダッシュボード）として読み込まれる
+- server は FS を読まない「集める専用」。`run-ai-monitor.sh` 単体ではカードは空で、各端末（この PC を含む）で `run-voice-client.sh` を別途起動して push すると映る
+- `run-ai-monitor.sh` は既に起動中の vibeboard / ai-monitor server / 旧 local を `pgrep -f` で検出し停止してから起動し直す。`run-voice-client.sh` の client (`--mode client`) は巻き込まない
+- ポート/ホスト変更は `VIBEBOARD_PORT` / `CCM_SERVER_PORT` / `CCM_SERVER_HOST` 環境変数（または `.env`）で指定可能。server ポートを変えた場合は `vibeboard.config.json` の `baseUrl` も合わせる
 
 #### 動作モード (`--mode`)
 
@@ -61,12 +62,12 @@ upstream への反映は後追いで行う。
 | `client` | local と同じ可視化 + 公開サーバへ uplink push | 同上 read-only | なし (送信のみ) |
 | `server` | 公開アグリゲータ。端末別 Bearer で push を受け集約・音声生成・ミラー配信 | **FS は読まない** (集約ストア = メモリ + TTL) | `/api/ingest/*` (認証付き) |
 
-`run-ai-monitor.sh` は `local` を起動する (`--mode local` 明示)。`local`/`client` は従来どおりローカル read-only で、書き込み API も持たない。公開・認証付き ingestion は `server` モードに限る。
+`run-ai-monitor.sh` は `server` を起動する (`--mode server` 明示)。`local`/`client` は従来どおりローカル read-only で、書き込み API も持たない。公開・認証付き ingestion は `server` モードに限る。
 
-ローカル動作検証用の起動スクリプト (ビルド + 同モードの既存停止 + 起動。3 つ併存可):
-- `./run-voice-server.sh` — server モード (既定 8190。ミラー + 音声)。`http://127.0.0.1:8190/view?item=dashboard`
-- `./run-voice-client.sh` — client モード (既定 8191。この端末の状態を server へ push)
-- 各スクリプトの停止対象は自モードのみ (`pgrep -f "...--mode <mode>"`) なので互いを巻き込まない。設定の解決順: node (`cli.ts`) が読む設定 (トークン/キー/URL/ラベル/allowlist 等) と、起動スクリプトが解決するポート/ホスト (`CCM_SERVER_HOST`/`CCM_SERVER_PORT`/`CCM_CLIENT_DASH_PORT`) は **env > リポ直下 `.env` > 既定** (ポート/ホストは `run-voice-*.sh` が `.env` を読む。直接 `node` 起動時は `--host`/`--port`)。`SKIP_BUILD`/`CCM_LOG_DIR` のみ **env > 既定**。
+起動スクリプト (ビルド + 同モードの既存停止 + 起動):
+- `./run-ai-monitor.sh` — vibeboard (8180) + ai-monitor **server** (既定 8190。集約 + 音声 + ミラー)。管理画面 `http://127.0.0.1:8180` の AI Monitor タブ = `http://127.0.0.1:8190/view?item=dashboard`
+- `./run-voice-client.sh` — client モード (既定 8191。この端末の状態を server へ push)。`run-ai-monitor.sh` と対で、可視化したい各端末（同一 PC を含む）で別途起動する
+- 各スクリプトの停止対象は自分が管理するもの (`run-ai-monitor.sh` = vibeboard / server / 旧 local、`run-voice-client.sh` = client) のみで互いを巻き込まない。設定の解決順: node (`cli.ts`) が読む設定 (トークン/キー/URL/ラベル/allowlist 等) と、起動スクリプトが解決するポート/ホスト (`VIBEBOARD_PORT`/`CCM_SERVER_HOST`/`CCM_SERVER_PORT`/`CCM_CLIENT_DASH_PORT`) は **env > リポ直下 `.env` > 既定** (ポート/ホストは各起動スクリプトが `.env` を読む。直接 `node` 起動時は `--host`/`--port`)。`SKIP_BUILD`/`CCM_LOG_DIR` のみ **env > 既定**。
 
 新しい **client** 端末は起動前に一度 `./scripts/setup-client.sh` を実行する (権限プロンプト検出 hook の `~/.claude/hooks/` 配置 + `~/.claude/settings.json` への冪等マージ + `.env` 雛形作成。`python3` は絶対パス解決して settings.json に書く。何度実行しても安全)。`local`/`server` のみで使う端末には不要。hook あり/なしの挙動差は下表のとおりで、hook が足すのは Bash/Edit/Write 権限プロンプトの「入力待ち」検出だけ (完了/途中経過/対話ツールの承認待ち音声は hook 非依存)。
 

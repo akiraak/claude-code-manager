@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # ai-monitor を client モードで起動する。この端末の Claude セッション状態を
-# 公開サーバ (server モード) へ push する。検証では run-voice-server.sh と対で使う。
+# 公開サーバ (server モード) へ push する。検証では run-ai-monitor.sh (server) と対で使う。
 # クライアント自身もローカルダッシュボード (従来 local 表示・音声なし) を別ポートで開く。
 #
 # 設定の優先順位:

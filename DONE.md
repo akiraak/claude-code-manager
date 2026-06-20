@@ -1,5 +1,12 @@
 # DONE
 
+- 2026-06-19: ./run-ai-monitor.sh と run-voice-server.sh を統合する ([plan](docs/plans/archive/run-ai-monitor-merge-voice-server.md))
+    - `run-ai-monitor.sh` を「vibeboard(8180) + ai-monitor **server**(8190・集約+音声+ミラー)」起動へ統合。旧 local 単体表示は廃止し、`run-voice-server.sh` は削除。client(`run-voice-client.sh`)は無改修
+    - 「集める専用」方針(B)確定: 単体ではカード空、各端末(同一PC含む)で client を別途 push。`vibeboard.config.json` の AI Monitor タブ baseUrl を 8181→8190 に変更(client の .env を触らず一致させる唯一の組合せ)
+    - stop_existing は vibeboard / `--mode server`(旧 run-voice-server 含む) / 旧 local(`--mode local`|旧`--port`) のみ対象。client(`--mode client`)は巻き込まない ― ライブ稼働 4 プロセスに対し read-only pgrep で検証し client 8191 がどのパターンにも不一致を確認
+    - 検証: `bash -n` 緑・`vibeboard.config.json` JSON 妥当・隔離ポート 8199 で統合 server 起動 → ダッシュボード HTTP 200 + 音声 UI(🔊/voice/音量)確認。docs(CLAUDE.md/README.md/.env.example/run-voice-client.sh コメント)更新
+    - 実環境の切替(ユーザーのライブ stack 再起動)は `./run-ai-monitor.sh` を手動実行で行う
+    - 追修正: 8180 の AI Monitor タブが server(8190)へブラウザ fetch/SSE するため CORS 許可が必要 (server モードは `CCM_CORS_ORIGIN` のオリジンのみ許可・local の `*` と違う)。未許可だと "Failed to fetch"。`run-ai-monitor.sh` が vibeboard/server の loopback オリジン (localhost/127.0.0.1) を **常にマージして export** する方式に修正 — 「未設定時のみ注入」だと既存 `.env` の `CCM_CORS_ORIGIN` (例: `https://ccm.example.com` のような vibeboard 非該当値) があると注入がスキップされ直らない、という Codex stop レビュー指摘に対応。既存値は保持・重複除去・export で dotenv より優先。`.env.example` も更新。実 .env 値でのマージと隔離ポートでの ACAO 返却を確認
 - 2026-06-19: なるこ（生徒）にボケとダジャレ要素を入れる ([plan](docs/plans/archive/naruko-boke-dajare.md))
     - ちょビ(先生=ツッコミ気質) と漫才的に噛み合う **ボケ役 + ダジャレ** をなるこに付与。ロジック無変更のデータのみ（`voice-persona.json` 正本 + `persona.ts:DEFAULT_STUDENT`/`DEFAULT_TEACHER` を同期）
     - 頻度は「控えめ（隠し味）」確定: ふだんは素直な生徒のまま、数回の会話に1回・1会話に多くても1つ・連発禁止。`awaiting` 時はふざけず止まっている理由を埋もれさせないルール追加。teacher に「なるこのボケに軽くツッコむ」ルール追加
