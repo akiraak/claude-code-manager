@@ -1,5 +1,10 @@
 # DONE
 
+- 2026-06-20: WebUIのボリュームと実際の音量が違って聞こえる ([plan](docs/plans/archive/voice-volume-perceptual-curve.md))
+    - 原因はスライダー値を `audio.volume = volume / 100` と**線形**でゲインに渡していたこと。`HTMLAudioElement.volume` は振幅 (リニアゲイン) だが人の音量知覚は対数的なので、中間域が体感上かなり大きく聞こえ表示%とズレていた
+    - `views.ts` の `DASHBOARD_VOICE_SCRIPT` に知覚カーブ `perceptualGain(pct)` を追加し `applyVolume()` を経由させた。exp カーブ `(exp(x)-1)/(e-1)` (x=pct/100): x=1→1.0 / x=0→0 / x=0.5→約0.38 (≈ -8dB ≒ 体感ほぼ半分)。表示数値・`ccm-voice-volume` 保存値はスライダー % のまま (互換維持)。サーバ側 (tts.ts/voice-pipeline.ts) に音量処理は無く変更なし
+    - `views.test.ts` に知覚カーブ使用 (`perceptualGain` / `Math.exp`) と素の `volume / 100` 不使用のアサート追加。`npm run build` 緑 / `npm test` 184 件 pass
+
 - 2026-06-20: WebUIのボリュームに数値を表示
     - ボイスバーの音量スライダー右に現在値 (0〜100) を `data-voice-volume-value` の `<span>` で表示。スライダー操作 (`input`) と初期化時 (`applyVolumeNum`) に同期。`tabular-nums` + `min-width:3ch` 右寄せで桁ブレ防止。`views.test.ts` にフック存在のアサート追加 (19 件 pass)
 

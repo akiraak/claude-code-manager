@@ -349,6 +349,11 @@ test('renderDashboard: voice:true で voice パネル / スクリプト / 配信
   assert.match(html, /voice-utterance/);
   assert.match(html, /\/api\/voice\/audio\//);
   assert.match(html, /\/api\/voice\/recent\.json/);
+  // 音量は知覚カーブ経由 (線形 volume/100 直結ではない。表示%と聞こえ方を一致させる)
+  assert.match(html, /perceptualGain/);
+  assert.match(html, /audio\.volume = perceptualGain\(/);
+  assert.match(html, /Math\.exp/);
+  assert.doesNotMatch(html, /audio\.volume = volume \/ 100/);
   // localStorage 永続キー
   assert.match(html, /ccm-voice-enabled/);
   assert.match(html, /ccm-voice-volume/);

@@ -1132,7 +1132,16 @@ const DASHBOARD_VOICE_SCRIPT = `
     toggleBtn.setAttribute('aria-pressed', enabled ? 'true' : 'false');
     toggleBtn.textContent = enabled ? '🔊 音声 ON' : '🔇 音声 OFF';
   }
-  function applyVolume() { audio.volume = volume / 100; }
+  // スライダー位置 (0-100) は「知覚音量」を線形に表すが、HTMLAudioElement.volume は
+  // 振幅 (リニアゲイン) で、人の音量知覚は対数的。volume/100 をそのまま入れると中間域が
+  // 体感上かなり大きく聞こえ、表示%と聞こえ方がズレる。知覚カーブに通して振幅へ変換する。
+  // exp カーブ: x=1→1.0, x=0→0, x=0.5→約0.38 (≈ -8dB ≒ 体感ほぼ半分)。
+  function perceptualGain(pct) {
+    var x = Math.max(0, Math.min(100, pct)) / 100;
+    if (x <= 0) return 0;
+    return (Math.exp(x) - 1) / (Math.E - 1);
+  }
+  function applyVolume() { audio.volume = perceptualGain(volume); }
   function applyVolumeNum() { if (volNumEl) volNumEl.textContent = String(volume); }
   function kindOn(k) { return kinds.indexOf(k) !== -1; }
   function setNow(text) { if (nowEl) nowEl.textContent = text || ''; }
