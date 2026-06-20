@@ -7,16 +7,13 @@ import type { EntrySource } from './entry-source';
 import type { NormalizedEvent } from './transcript';
 import {
   buildSnapshotPayload,
-  buildStateHistogram,
   classifyStatus,
   createHttpPoster,
   createUplinkRunner,
   formatStartupBanner,
-  formatSummaryLine,
   formatTransitionLine,
   isProjectMirrored,
   loadClientConfig,
-  summarySignature,
   VoiceEventDetector,
   VoiceEventQueue,
   type ClientConfig,
@@ -502,33 +499,6 @@ test('formatTransitionLine: detail 無しは末尾を付けない', () => {
   assert.equal(line, '[uplink] ✓ 完了   p');
 });
 
-test('buildStateHistogram: state を数える', () => {
-  const h = buildStateHistogram([
-    { state: 'ai-processing' }, { state: 'ai-processing' },
-    { state: 'awaiting-user' }, { state: 'waiting' }, { state: 'stopped' },
-  ]);
-  assert.deepEqual(h, { 'ai-processing': 2, 'awaiting-user': 1, waiting: 1, stopped: 1 });
-});
-
-test('summarySignature: 内訳 or 接続が変われば署名が変わる', () => {
-  const h = buildStateHistogram([{ state: 'waiting' }]);
-  const a = summarySignature(h, true);
-  assert.notEqual(a, summarySignature(h, false));
-  assert.notEqual(a, summarySignature(buildStateHistogram([{ state: 'ai-processing' }]), true));
-  assert.equal(a, summarySignature(buildStateHistogram([{ state: 'waiting' }]), true));
-});
-
-test('formatSummaryLine: 監視数(停止除く)・内訳・接続・queue を含む', () => {
-  const h = buildStateHistogram([
-    { state: 'ai-processing' }, { state: 'awaiting-user' }, { state: 'waiting' }, { state: 'stopped' },
-  ]);
-  const line = formatSummaryLine(0, h, { connected: true, queueSize: 3 });
-  assert.match(line, /^\[uplink\] \d{2}:\d{2}:\d{2} {2}監視3 {2}/); // 停止は監視数に含めない
-  assert.ok(line.includes('🟢AI処理1 🟠入力待1 🟡待機1 ⚪停止1'));
-  assert.ok(line.includes('送信OK voiceQ:3'));
-  assert.ok(formatSummaryLine(0, h, { connected: false, queueSize: 0 }).includes('送信断'));
-});
-
 test('formatStartupBanner: 主要設定を行に含める', () => {
   const config: ClientConfig = {
     serverUrl: 'https://ccm.example', token: 't', label: 'wsl2-akira',
@@ -555,7 +525,7 @@ test('formatStartupBanner: dryrun は送信先を伏せる', () => {
   assert.ok(joined.includes('全件'));
 });
 
-test('createUplinkRunner.tickOnce: 遷移とサマリをログに出す (案A/B)', async () => {
+test('createUplinkRunner.tickOnce: 遷移をログに出す (案A)', async () => {
   const logs: string[] = [];
   const baseEntry: MonitorEntry = {
     id: encodeId('-p'), projectDir: '-p', cwd: '/home/x/p',
@@ -577,8 +547,7 @@ test('createUplinkRunner.tickOnce: 遷移とサマリをログに出す (案A/B)
   const config = loadClientConfig({ CCM_DRYRUN: '1' }, 'host');
   const runner = createUplinkRunner(config, { source, poster: async () => ({ ok: true }), now: () => 1000, log: (m) => logs.push(m) });
 
-  await runner.tickOnce(); // 初回 baseline (遷移なし) + サマリ
-  assert.ok(logs.some(l => l.includes('監視1') && l.includes('🟢AI処理1')), 'サマリが出る');
+  await runner.tickOnce(); // 初回 baseline (遷移なし)
   assert.ok(!logs.some(l => l.includes('✓ 完了')), '初回は遷移を出さない');
 
   logs.length = 0;
