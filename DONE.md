@@ -1,5 +1,11 @@
 # DONE
 
+- 2026-06-20: 読み上げの頻度が高すぎるので調整する ([調査plan](docs/plans/archive/voice-frequency-investigation.md) / [試験運用①plan](docs/plans/archive/voice-progress-off-trial.md))
+    - 調査で発話内訳を実測 (543 発話 / 193 分: **completed 80% / progress 13% / awaiting 7%**・ピーク 14 発話/分)。主因は「completed が毎ターン完了で発火」、大半は 2 分未満の短ターン。awaiting(7%) は人間の応答待ち＝最重要なので**間引かない**方針を確定
+    - 調整レバーを 5 案評価 (3-1 完了の作業量ゲート=主軸 / 3-4 progress 間隔延長 / 3-2 session cooldown=補助 / 3-3 全体レート制限=awaiting を削るリスクで見送り寄り / 3-5 awaiting 据え置き)
+    - **第 1 弾の実装**: server に `CCM_VOICE_SPOKEN_KINDS` (読み上げ kind を csv で env 可変・既定 `completed,awaiting,progress`・不正/空は既定へフォールバック・起動ログに `spoken=` 併記) を実装 (コミット b9bf603)。`.env` に `CCM_VOICE_SPOKEN_KINDS=completed,awaiting` を設定し **progress(13%) を 0%** にできる状態にした。`run-ai-monitor.sh` への voice server 統合 (52da…) で env 1 箇所から全端末の読み上げ種別を制御
+    - クローズ時の未実施: 試験運用①の体感評価と Phase 4 (作業量ゲート等の本実装プラン `voice-frequency-tuning.md`) は、まず progress OFF で十分静かか様子見してから、必要なら別タスクで起こす方針。env レバーで即時調整できる状態にして本タスクは終了
+
 - 2026-06-20: `run-voice-client.sh` を `run-ai-monitor-client.sh` にリネーム ([plan](docs/plans/archive/rename-run-ai-monitor-client.md))
     - スクリプトは `--mode client` を起動するだけで音声は生成・再生しない (音声は server=`run-ai-monitor.sh` の責務)。旧名は廃止済み `run-voice-server.sh` との対だった残骸なので、相方 `run-ai-monitor.sh` と揃う名前へ改名
     - `git mv` + ログファイル名 `voice-client.log` → `ai-monitor-client.log` (`ai-monitor-server.log` と対に)。運用 docs/スクリプト (run-ai-monitor.sh / CLAUDE.md / README.md / .env.example / scripts/setup-client.sh) の参照を更新。ロジック変更なし
