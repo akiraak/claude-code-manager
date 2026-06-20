@@ -7,5 +7,3 @@
   - [ ] Phase 2: run-voice-server.sh を削除し参照を整理
   - [ ] Phase 3: CLAUDE.md ほかドキュメント更新
   - [ ] Phase 4: 動作検証 (キー有無 / トークン一致 / 別端末 client の隔離 / 旧 local 解放)
-
-- [ ] なるこにボケとダジャレ要素を入れる

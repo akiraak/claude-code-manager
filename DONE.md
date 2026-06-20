@@ -1,5 +1,9 @@
 # DONE
 
+- 2026-06-19: なるこ（生徒）にボケとダジャレ要素を入れる ([plan](docs/plans/archive/naruko-boke-dajare.md))
+    - ちょビ(先生=ツッコミ気質) と漫才的に噛み合う **ボケ役 + ダジャレ** をなるこに付与。ロジック無変更のデータのみ（`voice-persona.json` 正本 + `persona.ts:DEFAULT_STUDENT`/`DEFAULT_TEACHER` を同期）
+    - 頻度は「控えめ（隠し味）」確定: ふだんは素直な生徒のまま、数回の会話に1回・1会話に多くても1つ・連発禁止。`awaiting` 時はふざけず止まっている理由を埋もれさせないルール追加。teacher に「なるこのボケに軽くツッコむ」ルール追加
+    - 検証: `npm run build`+test 緑（171 pass・文言退行検知テスト 1 本追加）。実 Haiku で 6 イベント生成し、ダジャレ発火 1/6・awaiting で承認待ち理由が明確・掛け合い成立を目視確認
 - 2026-06-19: 端末ごとの会話が混じって聞こえる問題の調査と修正（1 イベントの複数音声を通して流す）([plan](docs/plans/archive/voice-cross-terminal-mixing.md))
     - 根本原因: server の `onVoiceEvent: v => void pipeline.handle(v)` が直列化なしの fire-and-forget で、近接イベントの `handle` が並行実行。発話ごとに `await tts` を挟むため `onUtterance`(=SSE) が端末をまたいで交互発火し、クライアントのフラット FIFO が混線再生していた
     - 修正: `VoicePipeline` に内部プロミスチェーン + `enqueue(event)` を追加（前イベントの全 utterance を出し切ってから次へ）。`server.ts` 結線を `pipeline.enqueue(v)` に。`handle`(per-event worker)は不変＝既存テスト互換。クライアント/store/ingest は無改修（SSE 順序が保証され既存 FIFO がそのまま通し再生になる）

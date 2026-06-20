@@ -154,6 +154,23 @@ test('voice-persona.json（リポ同梱）が 2 キャラで読める（Leda / A
   assert.ok(Object.keys(p.teacher.emotions).length > 0);
 });
 
+test('なるこ（student）にボケ・ダジャレ要素、ちょビ（teacher）にツッコミが入っている（同梱 + 既定とも）', () => {
+  for (const [label, p] of [['bundled', loadPersona()], ['default', DEFAULT_PERSONA]] as const) {
+    // student: 性格 + ルールにボケ/ダジャレが含まれる
+    assert.ok(p.student.systemPrompt.includes('ボケ'), `${label}: student.systemPrompt にボケ`);
+    assert.ok(p.student.systemPrompt.includes('ダジャレ'), `${label}: student.systemPrompt にダジャレ`);
+    assert.ok(
+      p.student.rules.some(r => r.includes('ボケ') || r.includes('ダジャレ')),
+      `${label}: student.rules にボケ/ダジャレ`,
+    );
+    // teacher: ボケにツッコむルールがある
+    assert.ok(
+      p.teacher.rules.some(r => r.includes('ツッコ')),
+      `${label}: teacher.rules にツッコミ`,
+    );
+  }
+});
+
 test('DialogueGenerator: generate 注入で JSON をパースして DialogueLine[] を返す', async () => {
   const gen = new DialogueGenerator({
     generate: async () =>
