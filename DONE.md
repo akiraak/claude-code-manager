@@ -1,5 +1,11 @@
 # DONE
 
+- 2026-06-19: クライアントプロセスのターミナルへの表示を増やす（案出し + 実装）([plan](docs/plans/archive/client-terminal-output.md))
+    - 正常時ほぼ無言だった `--mode client` 端末に表示を追加。案 A〜G を提案し、ユーザー選択で **A+B+D** を実装（C/E/F/G=色/env切替/送信サマリ/TTY固定行は見送り）
+    - 案A: 状態遷移ライブ表示（`formatTransitionLine`・started は「」括り・progress は経過分前置・40字`…`切り）＝サーバで音声化される素そのもの
+    - 案B: 定期サマリ行（`buildStateHistogram`/`summarySignature`/`formatSummaryLine`・`監視N 🟢AI処理.. 🟠入力待.. 🟡待機.. ⚪停止.. 送信OK/断 voiceQ:N`・変化時 or 30s でスロットル）
+    - 案D: 起動バナー拡充（`formatStartupBanner`・送信先/ラベル/間隔/ミラー/途中経過しきい値/voiceキュー上限）
+    - 変更は `ai-monitor/src/uplink.ts` のみ・`local`/`server` 不変。`uplink.test.ts` に単体追加（168 pass・tsc クリーン・dryrun スモーク確認）
 - 2026-06-19: 読み上げ内容を ai-twitch-cast に合わせる（モデルは Haiku 維持）([plan](docs/plans/archive/voice-content-align-ai-twitch-cast.md))
     - ちょビ(先生)+なるこ(生徒) の 2 人会話台本生成に刷新。読み上げ内容を ai-twitch-cast (`~/ai-twitch-cast`) に寄せた（テキスト生成モデルは Haiku 維持・トリガはイベント駆動維持・演出フル再現 emotion/se）。コミット `14afee6`
     - Phase 1: 2 キャラ persona（`voice-persona.json`/`persona.ts`・Leda/Aoede・emotions・旧 1 キャラ JSON 後方互換）

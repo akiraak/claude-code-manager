@@ -60,6 +60,12 @@ const DEFAULT_VOICE_BASE_BACKOFF_MS = 2000;
 const DEFAULT_VOICE_MAX_BACKOFF_MS = 60_000;
 const DEFAULT_HTTP_TIMEOUT_MS = 8000;
 
+// ---- ターミナル表示 -------------------------------------------------------
+/** 遷移ライブ行 (案A) の detail 1 行スニペット上限。 */
+const TRANSITION_DETAIL_MAX = 40;
+/** 定期サマリ行 (案B) を、状態に変化が無くても出す最小間隔。 */
+const SUMMARY_EVERY_MS = 30_000;
+
 // ---- 設定 -----------------------------------------------------------------
 
 export interface ClientConfig {
@@ -414,6 +420,96 @@ function transitionEvent(prevState: ActivityState, s: VoiceSessionInput): VoiceE
   return null;
 }
 
+// ---- ターミナル表示の整形 (純関数) ----------------------------------------
+
+/** 改行・連続空白を畳んで 1 行に収め、上限超は末尾を `…` で切る。 */
+function oneLineSnippet(text: string | undefined, max: number): string {
+  if (!text) return '';
+  const s = text.replace(/\s+/g, ' ').trim();
+  return s.length <= max ? s : s.slice(0, Math.max(0, max - 1)) + '…';
+}
+
+const KIND_LINE_LABEL: Record<VoiceEventKind, string> = {
+  started: '▶ 開始 ',
+  completed: '✓ 完了 ',
+  awaiting: '⏸ 入力待',
+  progress: '… 途中 ',
+};
+
+/**
+ * 案A: 状態遷移 voice イベントを 1 行に整形する。サーバで音声化される素そのものなので
+ * 「いま手元の端末が何を喋らせたか」と一致する。started は detail がユーザー指示なので 「」 で括る。
+ */
+export function formatTransitionLine(ev: VoiceEventOut): string {
+  const label = KIND_LINE_LABEL[ev.kind] ?? ev.kind;
+  const name = ev.projectName ?? ev.projectDir;
+  const snippet = oneLineSnippet(ev.detail, TRANSITION_DETAIL_MAX);
+  const detail = ev.kind === 'started' && snippet ? `「${snippet}」` : snippet;
+  const elapsed = ev.kind === 'progress' && ev.context?.elapsedMin ? `${ev.context.elapsedMin}分経過` : '';
+  const tail = [elapsed, detail].filter(Boolean).join(' / ');
+  return `[uplink] ${label}  ${name}${tail ? '  ' + tail : ''}`;
+}
+
+const SUMMARY_STATES: { key: ActivityState; emoji: string; label: string }[] = [
+  { key: 'ai-processing', emoji: '🟢', label: 'AI処理' },
+  { key: 'awaiting-user', emoji: '🟠', label: '入力待' },
+  { key: 'waiting', emoji: '🟡', label: '待機' },
+  { key: 'stopped', emoji: '⚪', label: '停止' },
+];
+
+/** 監視中エントリの state 内訳を数える (純関数)。 */
+export function buildStateHistogram(entries: { state: ActivityState }[]): Record<ActivityState, number> {
+  const h: Record<ActivityState, number> = {
+    'ai-processing': 0,
+    'awaiting-user': 0,
+    waiting: 0,
+    stopped: 0,
+  };
+  for (const e of entries) h[e.state] = (h[e.state] ?? 0) + 1;
+  return h;
+}
+
+/** ヒストグラム + 接続状態をスロットル判定用の署名にする (queueSize は含めない)。 */
+export function summarySignature(hist: Record<ActivityState, number>, connected: boolean): string {
+  return `${hist['ai-processing']},${hist['awaiting-user']},${hist.waiting},${hist.stopped}|${connected ? 1 : 0}`;
+}
+
+function clockHHMMSS(ms: number): string {
+  const d = new Date(ms);
+  const p = (n: number): string => String(n).padStart(2, '0');
+  return `${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`;
+}
+
+/**
+ * 案B: 監視中セッションの状態内訳・接続・キュー残数を 1 行に整形する。
+ * 「監視N」は停止を除く稼働中の件数。停止は ⚪ 停止N として別カウントで出す。
+ */
+export function formatSummaryLine(
+  nowMs: number,
+  hist: Record<ActivityState, number>,
+  opts: { connected: boolean; queueSize: number },
+): string {
+  const live = hist['ai-processing'] + hist['awaiting-user'] + hist.waiting;
+  const parts = SUMMARY_STATES.map(s => `${s.emoji}${s.label}${hist[s.key]}`).join(' ');
+  const conn = opts.connected ? '送信OK' : '送信断';
+  return `[uplink] ${clockHHMMSS(nowMs)}  監視${live}  ${parts}  ${conn} voiceQ:${opts.queueSize}`;
+}
+
+/** 案D: 起動時に設定一式を複数行のバナーで出す (設定ミスに気づける)。 */
+export function formatStartupBanner(config: ClientConfig, host: string): string[] {
+  const sec = (ms: number): string => `${Math.round(ms / 1000)}s`;
+  return [
+    '[uplink] ── client uplink 起動 ─────────────',
+    `[uplink]   送信先    : ${config.dryrun ? '(dryrun・送信なし)' : host}`,
+    `[uplink]   ラベル    : ${config.label}`,
+    `[uplink]   送信間隔  : ${config.intervalMs}ms`,
+    `[uplink]   ミラー    : ${config.mirrorProjects ? config.mirrorProjects.join(',') : '全件'}`,
+    `[uplink]   途中経過  : ${sec(config.progressAfterMs)} 後・以降 ${sec(config.progressEveryMs)} ごと`,
+    `[uplink]   voiceキュー: 最大 ${DEFAULT_VOICE_MAX_QUEUE}`,
+    '[uplink] ────────────────────────────────',
+  ];
+}
+
 // ---- HTTP 送信 ------------------------------------------------------------
 
 export type PostOutcome =
@@ -613,6 +709,9 @@ export function createUplinkRunner(config: ClientConfig, deps: UplinkRunnerDeps 
   // サーバ到達状態。接続OK / 切れ の「遷移」だけをログする (毎回の成功送信は無言)。
   let connected = false;
   let everConnected = false;
+  // 案B: 定期サマリのスロットル状態 (変化時 or SUMMARY_EVERY_MS 経過で出す)。
+  let lastSummarySig: string | undefined;
+  let lastSummaryAtMs = 0;
   const markConnected = (): void => {
     if (connected) return;
     connected = true;
@@ -729,8 +828,21 @@ export function createUplinkRunner(config: ClientConfig, deps: UplinkRunnerDeps 
           lastAssistantAt: e.tail?.lastAssistantAt,
         };
       });
-      for (const ev of detector.observe(inputs, now())) queue.enqueue(ev);
+      for (const ev of detector.observe(inputs, now())) {
+        log(formatTransitionLine(ev)); // 案A: 遷移をライブ表示
+        queue.enqueue(ev);
+      }
       await queue.flush();
+
+      // 案B: 監視状況のサマリを「状態が変わったとき or 一定間隔」で 1 行出す。
+      const tnow = now();
+      const hist = buildStateHistogram(mirrored);
+      const sig = summarySignature(hist, connected);
+      if (sig !== lastSummarySig || tnow - lastSummaryAtMs >= SUMMARY_EVERY_MS) {
+        lastSummarySig = sig;
+        lastSummaryAtMs = tnow;
+        log(formatSummaryLine(tnow, hist, { connected, queueSize: queue.size() }));
+      }
     } finally {
       inflight = false;
     }
@@ -757,10 +869,7 @@ export function startUplink(config: ClientConfig, deps: UplinkRunnerDeps = {}): 
   } catch {
     host = config.serverUrl;
   }
-  log(
-    `[uplink] 起動: server=${config.dryrun ? '(dryrun)' : host} label=${config.label} ` +
-      `interval=${config.intervalMs}ms mirror=${config.mirrorProjects ? config.mirrorProjects.join(',') : '全件'}`,
-  );
+  for (const line of formatStartupBanner(config, host)) log(line);
 
   const trigger = (): void => {
     void runner.tickOnce();

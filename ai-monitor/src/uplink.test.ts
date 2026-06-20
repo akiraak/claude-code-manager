@@ -7,13 +7,19 @@ import type { EntrySource } from './entry-source';
 import type { NormalizedEvent } from './transcript';
 import {
   buildSnapshotPayload,
+  buildStateHistogram,
   classifyStatus,
   createHttpPoster,
   createUplinkRunner,
+  formatStartupBanner,
+  formatSummaryLine,
+  formatTransitionLine,
   isProjectMirrored,
   loadClientConfig,
+  summarySignature,
   VoiceEventDetector,
   VoiceEventQueue,
+  type ClientConfig,
   type FetchLike,
   type PostOutcome,
   type Poster,
@@ -464,4 +470,119 @@ test('createUplinkRunner: 429 でも全 project が最終的に送られる (恒
   nowMs = 100_000; // クールダウン明け + fake ウィンドウもリセット
   await runner.tickOnce(); // 未送信 (= 最古) の p2 が先頭に来て送られる
   assert.deepEqual([...accepted].sort(), ['-p0', '-p1', '-p2']);
+});
+
+// ---- ターミナル表示の整形 (案A/B/D) ----------------------------------------
+
+test('formatTransitionLine: started はユーザー指示を「」で括る', () => {
+  const ev: VoiceEventOut = {
+    projectDir: '-home-x', projectName: 'claude-code-manager',
+    kind: 'started', state: 'ai-processing', detail: 'todo の表示を増やす',
+  };
+  const line = formatTransitionLine(ev);
+  assert.equal(line, '[uplink] ▶ 開始   claude-code-manager  「todo の表示を増やす」');
+});
+
+test('formatTransitionLine: progress は経過分を前置し、長い detail は … で切る', () => {
+  const ev: VoiceEventOut = {
+    projectDir: '-p', projectName: 'p', kind: 'progress', state: 'ai-processing',
+    detail: 'あ'.repeat(60), context: { elapsedMin: 12 },
+  };
+  const line = formatTransitionLine(ev);
+  assert.ok(line.startsWith('[uplink] … 途中   p  12分経過 / '));
+  assert.ok(line.endsWith('…'));
+  // 40 字上限 (39 + …)
+  assert.equal(line.split(' / ')[1].length, 40);
+});
+
+test('formatTransitionLine: detail 無しは末尾を付けない', () => {
+  const line = formatTransitionLine({
+    projectDir: '-p', projectName: 'p', kind: 'completed', state: 'waiting',
+  });
+  assert.equal(line, '[uplink] ✓ 完了   p');
+});
+
+test('buildStateHistogram: state を数える', () => {
+  const h = buildStateHistogram([
+    { state: 'ai-processing' }, { state: 'ai-processing' },
+    { state: 'awaiting-user' }, { state: 'waiting' }, { state: 'stopped' },
+  ]);
+  assert.deepEqual(h, { 'ai-processing': 2, 'awaiting-user': 1, waiting: 1, stopped: 1 });
+});
+
+test('summarySignature: 内訳 or 接続が変われば署名が変わる', () => {
+  const h = buildStateHistogram([{ state: 'waiting' }]);
+  const a = summarySignature(h, true);
+  assert.notEqual(a, summarySignature(h, false));
+  assert.notEqual(a, summarySignature(buildStateHistogram([{ state: 'ai-processing' }]), true));
+  assert.equal(a, summarySignature(buildStateHistogram([{ state: 'waiting' }]), true));
+});
+
+test('formatSummaryLine: 監視数(停止除く)・内訳・接続・queue を含む', () => {
+  const h = buildStateHistogram([
+    { state: 'ai-processing' }, { state: 'awaiting-user' }, { state: 'waiting' }, { state: 'stopped' },
+  ]);
+  const line = formatSummaryLine(0, h, { connected: true, queueSize: 3 });
+  assert.match(line, /^\[uplink\] \d{2}:\d{2}:\d{2} {2}監視3 {2}/); // 停止は監視数に含めない
+  assert.ok(line.includes('🟢AI処理1 🟠入力待1 🟡待機1 ⚪停止1'));
+  assert.ok(line.includes('送信OK voiceQ:3'));
+  assert.ok(formatSummaryLine(0, h, { connected: false, queueSize: 0 }).includes('送信断'));
+});
+
+test('formatStartupBanner: 主要設定を行に含める', () => {
+  const config: ClientConfig = {
+    serverUrl: 'https://ccm.example', token: 't', label: 'wsl2-akira',
+    mirrorProjects: ['a', 'b'], dryrun: false, intervalMs: 4000,
+    progressAfterMs: 120_000, progressEveryMs: 120_000,
+  };
+  const lines = formatStartupBanner(config, 'ccm.example');
+  const joined = lines.join('\n');
+  assert.ok(lines.every(l => l.startsWith('[uplink] ')));
+  assert.ok(joined.includes('ccm.example'));
+  assert.ok(joined.includes('wsl2-akira'));
+  assert.ok(joined.includes('4000ms'));
+  assert.ok(joined.includes('a,b'));
+  assert.ok(joined.includes('120s 後・以降 120s ごと'));
+});
+
+test('formatStartupBanner: dryrun は送信先を伏せる', () => {
+  const config: ClientConfig = {
+    serverUrl: '', token: '', label: 'h', mirrorProjects: null, dryrun: true,
+    intervalMs: 4000, progressAfterMs: 1000, progressEveryMs: 1000,
+  };
+  const joined = formatStartupBanner(config, '(none)').join('\n');
+  assert.ok(joined.includes('(dryrun・送信なし)'));
+  assert.ok(joined.includes('全件'));
+});
+
+test('createUplinkRunner.tickOnce: 遷移とサマリをログに出す (案A/B)', async () => {
+  const logs: string[] = [];
+  const baseEntry: MonitorEntry = {
+    id: encodeId('-p'), projectDir: '-p', cwd: '/home/x/p',
+    process: { pid: 1, cwd: '/home/x/p' } as MonitorEntry['process'],
+    transcript: { projectDir: '-p', cwd: '/home/x/p', jsonlPath: '/j', mtimeMs: 1, sessionId: 's' },
+    lastActivityAt: '2026-06-19T00:00:00.000Z',
+    tail: {
+      lastUserText: 'やって', lastAssistantText: 'できた',
+      endsWithInteractiveToolUse: false, endsWithLocalCommand: false,
+    },
+    state: 'waiting',
+  };
+  let state: ActivityState = 'ai-processing';
+  const source: EntrySource = {
+    buildEntries: async () => [{ ...baseEntry, state }],
+    readEvents: () => [],
+    readTailEvents: () => [],
+  } as unknown as EntrySource;
+  const config = loadClientConfig({ CCM_DRYRUN: '1' }, 'host');
+  const runner = createUplinkRunner(config, { source, poster: async () => ({ ok: true }), now: () => 1000, log: (m) => logs.push(m) });
+
+  await runner.tickOnce(); // 初回 baseline (遷移なし) + サマリ
+  assert.ok(logs.some(l => l.includes('監視1') && l.includes('🟢AI処理1')), 'サマリが出る');
+  assert.ok(!logs.some(l => l.includes('✓ 完了')), '初回は遷移を出さない');
+
+  logs.length = 0;
+  state = 'waiting'; // ai-processing → waiting = completed
+  await runner.tickOnce();
+  assert.ok(logs.some(l => l.startsWith('[uplink] ✓ 完了')), '完了遷移が出る');
 });
