@@ -1,5 +1,8 @@
 # DONE
 
+- 2026-06-20: WebUIのボリュームに数値を表示
+    - ボイスバーの音量スライダー右に現在値 (0〜100) を `data-voice-volume-value` の `<span>` で表示。スライダー操作 (`input`) と初期化時 (`applyVolumeNum`) に同期。`tabular-nums` + `min-width:3ch` 右寄せで桁ブレ防止。`views.test.ts` にフック存在のアサート追加 (19 件 pass)
+
 - 2026-06-20: 同じ会話が２回流れるバグ ([plan](docs/plans/archive/voice-duplicate-playback.md))
     - 原因を 2 系統に切り分け、多層防御で両方塞いだ。**T1**: server に voice-event の冪等性が無く、lost-ack 再送 (cooldown 429 後の再送含む) で同一イベントから会話が二重生成される (別 `groupId` のため client 側 dedup では消せない)。**T2**: client 再生キューに seen-id dedup が無く、同一 utterance が二重配信されると 2 回鳴る
     - **Phase 1 (server 冪等化・主対策)**: `VoiceEventOut`/`VoiceEventPayload` に `eventId` を追加し、**enqueue 直前に 1 回だけ** `randomUUID()` で採番 (`uplink.ts`)。`flush()` は同一 `ev` を再送するので eventId は再送をまたいで不変 → server が同一イベントと判定できる。`ingest.ts` で型/長さ検証 (≤128字)。`VoicePipeline` に TTL(10分)+件数上限(500) の `SeenEventIds` を持たせ、`handle()` の spokenKinds ゲート後に既知 eventId をスキップ。eventId 欠落 (旧クライアント) は dedup せず従来生成 (取りこぼしより重複許容)

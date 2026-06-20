@@ -332,6 +332,7 @@ const VOICE_STYLE = `
 .voice-toggle[aria-pressed="true"] { background: #1565c0; color: #fff; border-color: #1565c0; }
 .voice-vol { display: inline-flex; align-items: center; gap: 6px; color: #555; }
 .voice-vol input[type="range"] { width: 90px; }
+.voice-vol-num { min-width: 3ch; text-align: right; font-variant-numeric: tabular-nums; color: #555; }
 .voice-filters, .voice-client { display: inline-flex; align-items: center; gap: 8px; color: #555; }
 .voice-filters label { display: inline-flex; align-items: center; gap: 3px; cursor: pointer; }
 .voice-client select { font: inherit; font-size: 12px; }
@@ -1039,7 +1040,7 @@ const DASHBOARD_LIVE_SCRIPT = `
 function renderVoiceBar(): string {
   return `<div class="voice-bar" data-voice-bar>
     <button type="button" class="voice-toggle" data-voice-toggle aria-pressed="false">🔇 音声 OFF</button>
-    <label class="voice-vol">音量 <input type="range" min="0" max="100" value="80" data-voice-volume></label>
+    <label class="voice-vol">音量 <input type="range" min="0" max="100" value="80" data-voice-volume><span class="voice-vol-num" data-voice-volume-value>80</span></label>
     <span class="voice-sep"></span>
     <span class="voice-filters" data-voice-kinds>
       <label><input type="checkbox" data-voice-kind="completed" checked> 完了</label>
@@ -1080,6 +1081,7 @@ const DASHBOARD_VOICE_SCRIPT = `
   window.__ccmVoiceInit = true;
   var toggleBtn = document.querySelector('[data-voice-toggle]');
   var volEl = document.querySelector('[data-voice-volume]');
+  var volNumEl = document.querySelector('[data-voice-volume-value]');
   var clientSel = document.querySelector('[data-voice-client]');
   var histToggle = document.querySelector('[data-voice-history-toggle]');
   var histEl = document.querySelector('[data-voice-history]');
@@ -1131,6 +1133,7 @@ const DASHBOARD_VOICE_SCRIPT = `
     toggleBtn.textContent = enabled ? '🔊 音声 ON' : '🔇 音声 OFF';
   }
   function applyVolume() { audio.volume = volume / 100; }
+  function applyVolumeNum() { if (volNumEl) volNumEl.textContent = String(volume); }
   function kindOn(k) { return kinds.indexOf(k) !== -1; }
   function setNow(text) { if (nowEl) nowEl.textContent = text || ''; }
   function passes(meta) {
@@ -1276,6 +1279,7 @@ const DASHBOARD_VOICE_SCRIPT = `
     volume = isNaN(n) ? volume : Math.max(0, Math.min(100, n));
     lsSet('ccm-voice-volume', String(volume));
     applyVolume();
+    applyVolumeNum();
   });
   for (var i = 0; i < kindBoxes.length; i++) {
     kindBoxes[i].addEventListener('change', function() {
@@ -1309,6 +1313,7 @@ const DASHBOARD_VOICE_SCRIPT = `
   applyToggleUI();
   volEl.value = String(volume);
   applyVolume();
+  applyVolumeNum();
   for (var b = 0; b < kindBoxes.length; b++) {
     kindBoxes[b].checked = kindOn(kindBoxes[b].getAttribute('data-voice-kind'));
   }

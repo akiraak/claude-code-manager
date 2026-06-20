@@ -334,6 +334,8 @@ test('renderDashboard: voice:true で voice パネル / スクリプト / 配信
   assert.match(html, /data-voice-bar/);
   assert.match(html, /data-voice-toggle/);
   assert.match(html, /data-voice-volume/);
+  // 音量の数値表示
+  assert.match(html, /data-voice-volume-value/);
   assert.match(html, /data-voice-client/);
   assert.match(html, /data-voice-history-toggle/);
   assert.match(html, /data-voice-history/);
