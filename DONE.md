@@ -1,12 +1,22 @@
 # DONE
 
+- 2026-06-19: 読み上げ内容を ai-twitch-cast に合わせる（モデルは Haiku 維持）([plan](docs/plans/archive/voice-content-align-ai-twitch-cast.md))
+    - ちょビ(先生)+なるこ(生徒) の 2 人会話台本生成に刷新。読み上げ内容を ai-twitch-cast (`~/ai-twitch-cast`) に寄せた（テキスト生成モデルは Haiku 維持・トリガはイベント駆動維持・演出フル再現 emotion/se）。コミット `14afee6`
+    - Phase 1: 2 キャラ persona（`voice-persona.json`/`persona.ts`・Leda/Aoede・emotions・旧 1 キャラ JSON 後方互換）
+    - Phase 2: コンテキスト拡張（`transcript.ts:extractWorkContext`/`describeToolUse` で指示/アクション列/メモを抽出 → `store`/`uplink`/`ingest`/`redaction` で送受・検証）
+    - Phase 3: 対話生成（`persona.ts:buildClaudeWorkPrompt` で ai_responder.py 移植・Haiku→JSON 配列・`parseDialogue`/emotion 検証・反復防止）+ ハード切り詰め廃止（途切れ解消）
+    - Phase 4: マルチ発話 + 2 声 TTS（`voice-pipeline`/`voice-store`/`tts`・speaker 別の声・groupId + createdAtMs で順序保証）
+    - Phase 5: UI 会話表示（`views.ts`・speaker/emotion ラベル・端末表示）
+    - Phase 7a: テスト 159 pass / tsc クリーン / CLAUDE.md 更新
+    - クローズ時点の未実施: Phase 6 記憶層（Persona/Self-Note 自動更新）は任意のため見送り。手動 E2E（実 ANTHROPIC/GEMINI キー）はユーザー環境で別途
 - 2026-06-19: Dashboard 履歴に端末表示 + ログ/読み上げにキャラ名 ([plan](docs/plans/archive/voice-history-terminal-and-character-name.md))
     - ボイス履歴行に端末 (clientId) チップを追加 (`views.ts` `vh-client`)。サーバのボイスログ行に話者キャラ名 (ちょビ/なるこ) を付与 (`server.ts`・`characterFor(persona, u.speaker).name`)。Dashboard 読み上げ側 (履歴 speaker チップ + 再生中表示) は 2 人会話化 Phase 5 で既出。`views.test.ts` に `vh-client` / `SPEAKER_LABEL` の存在 assert を追加 (159 pass)
 - 2026-06-19: 読み上げが途中で途切れる（文字数制限は生成側で・読み上げは全文）
     - 「ai-twitch-cast に合わせる」Phase 3 で解消。旧 `persona.cleanLine` の 50 字ハード切り詰め（末尾 `…`）を廃止し、長さ制御は生成プロンプト側（1〜2 文・40 字目安）に移した。読み上げ（tts_text）はそのまま全文を読む（暴走防止の安全網 `SPEECH_SAFETY_MAX` のみ・通常は発火しない）
-- 2026-06-19: 読み上げの内容が ai-twitch-cast と違う — 違う箇所を調査と整理 ([plan](docs/plans/voice-content-diff-vs-ai-twitch-cast.md))
+- 2026-06-19: 読み上げの内容が ai-twitch-cast と違う — 違う箇所を調査と整理 ([plan](docs/plans/archive/voice-content-diff-vs-ai-twitch-cast.md))
     - 両実装の「読み上げテキストが出来るまで」を 11 軸で diff し、各差分を 意図的そぎ落とし / 移植時の劣化 / 要判断 に 3 分類。体感差の主因は ①投入コンテキスト枯渇（直近 assistant text 1 件のみ）②出力 50 字キャップ + 1 人独白 ③人格書き換え + キャッシュ反復、と特定
-    - 方針決定（ユーザー確定）: テキスト生成は Haiku 維持・それ以外を ai-twitch-cast に合わせる。トリガはイベント駆動維持（8 分周期は追加しない）、演出はフル再現（2 人会話 + emotion/se）。後続の実装タスク「読み上げ内容を ai-twitch-cast に合わせる」([plan](docs/plans/voice-content-align-ai-twitch-cast.md)) に展開
+    - 方針決定（ユーザー確定）: テキスト生成は Haiku 維持・それ以外を ai-twitch-cast に合わせる。トリガはイベント駆動維持（8 分周期は追加しない）、演出はフル再現（2 人会話 + emotion/se）。後続の実装タスク「読み上げ内容を ai-twitch-cast に合わせる」([plan](docs/plans/archive/voice-content-align-ai-twitch-cast.md)) に展開
+- 2026-06-19: 新しいクライアント環境で hook などの初期設定を行う ([plan](docs/plans/archive/new-client-setup.md))
     - グローバル hook `ccm-awaiting-marker.py`（権限プロンプトの「入力待ち」検出用）がリポ未管理 = 端末ごとの手動配置だった問題を、リポ vendor + 冪等セットアップスクリプトで解消。hook が足すのは Bash/Edit/Write 権限プロンプトの検出 1 点のみで、完了/途中経過/対話ツール承認待ちの音声は hook 非依存（= hook 無しでも鳴る）ことを明文化
     - Phase 1: hook を `ai-monitor/hooks/ccm-awaiting-marker.py` として正本化（リポ vendor）
     - Phase 2: `scripts/setup-client.sh`（python3 絶対パス解決 + hook 配置 + `~/.claude/settings.json` の PermissionRequest/PostToolUse/Stop へ冪等マージ（既存 hook 非破壊・二重登録防止・`.bak`）+ `.env` 雛形）

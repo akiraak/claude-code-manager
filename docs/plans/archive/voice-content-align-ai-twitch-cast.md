@@ -2,7 +2,7 @@
 
 ## 目的・背景
 
-調査（`docs/plans/voice-content-diff-vs-ai-twitch-cast.md`）で、ai-monitor の読み上げが ai-twitch-cast と「内容が違う」主因は **投入コンテキスト枯渇 / 1 人独白 / 出力 50 字キャップ / 人格書き換え / 反復** だと判明した。本タスクは **テキスト生成モデルは Anthropic Claude Haiku のまま**、それ以外の読み上げ生成パイプラインを ai-twitch-cast の実装に合わせる。
+調査（`docs/plans/archive/voice-content-diff-vs-ai-twitch-cast.md`）で、ai-monitor の読み上げが ai-twitch-cast と「内容が違う」主因は **投入コンテキスト枯渇 / 1 人独白 / 出力 50 字キャップ / 人格書き換え / 反復** だと判明した。本タスクは **テキスト生成モデルは Anthropic Claude Haiku のまま**、それ以外の読み上げ生成パイプラインを ai-twitch-cast の実装に合わせる。
 
 ### ユーザー確定事項（2026-06-19 ヒアリング）
 
