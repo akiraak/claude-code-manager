@@ -1,5 +1,6 @@
 import crypto from 'crypto';
 import type { VoiceEventKind } from './store';
+import type { CharacterRole } from './persona';
 
 /**
  * `--mode server` の utterance ストア。ペルソナ短文 + 合成済み音声バイトを **メモリ + TTL** で保持する。
@@ -23,6 +24,14 @@ export interface Utterance {
   projectDir: string;
   projectName?: string;
   createdAtMs: number;
+  /** どちらのキャラの発話か（teacher=ちょビ / student=なるこ）。 */
+  speaker?: CharacterRole;
+  /** 感情ラベル（UI 表示用・メタ）。 */
+  emotion?: string;
+  /** 効果音カテゴリ（本実装は常に null）。 */
+  se?: string | null;
+  /** 同一 voice-event から生まれた会話をまとめるグループ id。 */
+  groupId?: string;
   /** TTS が無効 / 失敗のときは undefined（テキストのみの utterance）。 */
   audio?: UtteranceAudio;
 }
@@ -35,6 +44,9 @@ export interface UtteranceMeta {
   clientId: string;
   projectName?: string;
   createdAtMs: number;
+  speaker?: CharacterRole;
+  emotion?: string;
+  groupId?: string;
   hasAudio: boolean;
   mime?: string;
 }
@@ -46,6 +58,10 @@ export interface PutUtterance {
   clientId: string;
   projectDir: string;
   projectName?: string;
+  speaker?: CharacterRole;
+  emotion?: string;
+  se?: string | null;
+  groupId?: string;
   audio?: UtteranceAudio;
 }
 
@@ -72,6 +88,9 @@ export function toUtteranceMeta(u: Utterance): UtteranceMeta {
     clientId: u.clientId,
     projectName: u.projectName,
     createdAtMs: u.createdAtMs,
+    speaker: u.speaker,
+    emotion: u.emotion,
+    groupId: u.groupId,
     hasAudio: Boolean(u.audio),
     mime: u.audio?.mime,
   };
@@ -112,6 +131,24 @@ export class VoiceStore {
       .sort((a, b) => b.createdAtMs - a.createdAtMs)
       .slice(0, limit)
       .map(toUtteranceMeta);
+  }
+
+  /**
+   * 指定セッション (clientId × projectDir) の直近発話テキストを **古い順** で返す。
+   * 会話生成の繰り返し防止 (`lastConversation`) に使う。
+   */
+  recentTextsForSession(
+    clientId: string,
+    projectDir: string,
+    nowMs: number,
+    limit = 6,
+  ): string[] {
+    this.prune(nowMs);
+    return Array.from(this.items.values())
+      .filter(u => u.clientId === clientId && u.projectDir === projectDir)
+      .sort((a, b) => a.createdAtMs - b.createdAtMs)
+      .slice(-limit)
+      .map(u => u.text);
   }
 
   prune(nowMs: number): void {

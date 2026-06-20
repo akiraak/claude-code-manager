@@ -51,12 +51,29 @@ export interface VoiceEventPayload {
   projectDir: string;
   sessionId?: string;
   kind: VoiceEventKind;
-  /** 発話の素になる短い説明 (クライアントで redaction + 切り詰め済み)。 */
+  /** 発話の素になる短い説明 (クライアントで redaction + 切り詰め済み)。後方互換で残す。 */
   detail?: string;
   /** ペルソナ文に混ぜるプロジェクト名 (cwd の basename 等)。 */
   projectName?: string;
   /** 遷移後の状態。 */
   state?: ActivityState;
+  /**
+   * 2 人会話の素になる作業コンテキスト (クライアントで抽出 + redaction + 切り詰め済み)。
+   * ai-twitch-cast の `summary` 相当。ingest で配列長・各文字数が検証される。
+   */
+  context?: VoiceEventContext;
+}
+
+/** voice-event に載せる作業コンテキスト (会話台本生成の入力)。 */
+export interface VoiceEventContext {
+  /** ユーザーの最新の指示 (200 字程度)。 */
+  userPrompt?: string;
+  /** 直近のアクション (「コマンド実行: …」「ファイル編集: …」等。最大 10 件)。 */
+  actions?: string[];
+  /** Claude のテキストメモ (直近 3 件)。 */
+  notes?: string[];
+  /** ai-processing 開始からの経過 (分)。 */
+  elapsedMin?: number;
 }
 
 /** ストアに積まれた音声イベント (受信時刻付き)。 */

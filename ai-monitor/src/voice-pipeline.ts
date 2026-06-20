@@ -1,13 +1,18 @@
-import type { PersonaGenerator } from './persona';
+import crypto from 'crypto';
+import { characterFor, type DialogueGenerator, type PersonaInput } from './persona';
 import type { VoiceEventKind, VoiceEventPayload } from './store';
 import type { TtsProvider } from './tts';
 import type { Utterance, VoiceStore } from './voice-store';
 
 /**
  * `--mode server` の音声オーケストレーション。集約ストアに記録された voice-event を
- * ペルソナ短文 → TTS → utterance ストアへと流し、完了を `onUtterance` で通知する（SSE push 用）。
+ * 「ちょビ & なるこ 2 人の会話台本」→ 各発話の TTS → utterance ストアへと流し、
+ * 完了を `onUtterance` で通知する（SSE push 用）。
  *
- * - `started`（指示受信相当）は **読み上げない**（要件 #3: 発話は完了 / 承認待ち / 途中経過のみ）。
+ * - `started`（指示受信相当）は **読み上げない**（要件: 発話は完了 / 承認待ち / 途中経過のみ）。
+ * - 1 つの voice-event から **複数 utterance**（2〜4 発話の会話）を生成し、speaker ごとに声を変える
+ *   （teacher=Leda / student=Aoede）。同一会話は `groupId` で束ね、`createdAtMs` を 1ms ずつ
+ *   ずらして**順序を保証**する（ブラウザ側の順次再生がそのまま会話順になる）。
  * - TTS が無効 / 失敗でも **テキストのみの utterance** を作る（ミラー / 履歴で文字は出せる）。
  * - `handle` は **絶対に throw しない**（ingest の応答や他イベントを巻き込まないため fire-and-forget で呼ばれる）。
  */
@@ -16,12 +21,12 @@ import type { Utterance, VoiceStore } from './voice-store';
 export const SPOKEN_KINDS: readonly VoiceEventKind[] = ['awaiting', 'completed', 'progress'];
 
 export interface VoicePipelineDeps {
-  persona: PersonaGenerator;
+  persona: DialogueGenerator;
   tts: TtsProvider;
   store: VoiceStore;
   /** 現在時刻 (ms)。テストで固定するため注入可能。既定 Date.now。 */
   now?: () => number;
-  /** utterance 生成完了時に呼ぶ（SSE `voice-utterance` push 用）。 */
+  /** utterance 生成完了時に呼ぶ（SSE `voice-utterance` push 用）。発話数分だけ順に呼ばれる。 */
   onUtterance?: (u: Utterance) => void;
 }
 
@@ -30,7 +35,7 @@ function errMsg(err: unknown): string {
 }
 
 export class VoicePipeline {
-  private readonly persona: PersonaGenerator;
+  private readonly persona: DialogueGenerator;
   private readonly tts: TtsProvider;
   private readonly store: VoiceStore;
   private readonly now: () => number;
@@ -44,48 +49,81 @@ export class VoicePipeline {
     this.onUtterance = deps.onUtterance ?? (() => { /* noop */ });
   }
 
-  async handle(event: VoiceEventPayload): Promise<Utterance | null> {
+  async handle(event: VoiceEventPayload): Promise<Utterance[]> {
     try {
-      if (!SPOKEN_KINDS.includes(event.kind)) return null;
+      if (!SPOKEN_KINDS.includes(event.kind)) return [];
 
-      const text = await this.persona.generate({
-        kind: event.kind,
-        detail: event.detail,
-        projectName: event.projectName,
-      });
-      if (!text) return null;
-
-      let audio: Utterance['audio'];
-      if (this.tts.isEnabled()) {
-        try {
-          const r = await this.tts.synthesize(text);
-          if (r) audio = { bytes: r.bytes, mime: r.mime };
-        } catch (err) {
-          // 音声だけ失敗。テキストは保存して先に進む。
-          console.warn(`[ai-monitor] voice tts 失敗: ${errMsg(err)}（テキストのみ保存）`);
-        }
-      }
-
-      const utt = this.store.put(
-        {
-          text,
-          kind: event.kind,
-          clientId: event.clientId,
-          projectDir: event.projectDir,
-          projectName: event.projectName,
-          audio,
-        },
+      const persona = this.persona.getPersona();
+      const lastConversation = this.store.recentTextsForSession(
+        event.clientId,
+        event.projectDir,
         this.now(),
       );
-      try {
-        this.onUtterance(utt);
-      } catch {
-        /* listener のエラーは握りつぶす */
+      // 旧クライアント (detail のみ) との後方互換: context が無ければ detail を notes に流す。
+      const notes = event.context?.notes ?? (event.detail ? [event.detail] : undefined);
+      const input: PersonaInput = {
+        kind: event.kind,
+        projectName: event.projectName,
+        userPrompt: event.context?.userPrompt,
+        actions: event.context?.actions,
+        notes,
+        elapsedMin: event.context?.elapsedMin,
+        lastConversation,
+      };
+
+      const lines = await this.persona.generate(input);
+      if (lines.length === 0) return [];
+
+      const groupId = crypto.randomBytes(8).toString('base64url');
+      const base = this.now();
+      const out: Utterance[] = [];
+
+      for (let i = 0; i < lines.length; i++) {
+        const line = lines[i];
+        const char = characterFor(persona, line.speaker);
+
+        let audio: Utterance['audio'];
+        if (this.tts.isEnabled()) {
+          try {
+            const r = await this.tts.synthesize(line.ttsText, {
+              voice: char.ttsVoice,
+              style: char.ttsStyle,
+            });
+            if (r) audio = { bytes: r.bytes, mime: r.mime };
+          } catch (err) {
+            // 音声だけ失敗。テキストは保存して先に進む。
+            console.warn(`[ai-monitor] voice tts 失敗: ${errMsg(err)}（テキストのみ保存）`);
+          }
+        }
+
+        // createdAtMs を 1ms ずつずらして会話順を保証する。
+        const utt = this.store.put(
+          {
+            text: line.speech,
+            kind: event.kind,
+            clientId: event.clientId,
+            projectDir: event.projectDir,
+            projectName: event.projectName,
+            speaker: line.speaker,
+            emotion: line.emotion,
+            se: line.se,
+            groupId,
+            audio,
+          },
+          base + i,
+        );
+        try {
+          this.onUtterance(utt);
+        } catch {
+          /* listener のエラーは握りつぶす */
+        }
+        out.push(utt);
       }
-      return utt;
+
+      return out;
     } catch (err) {
       console.warn(`[ai-monitor] voice pipeline 失敗: ${errMsg(err)}`);
-      return null;
+      return [];
     }
   }
 }

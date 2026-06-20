@@ -366,6 +366,10 @@ const VOICE_STYLE = `
 .vh-kind-awaiting  { background: #ffe0b2; color: #bf360c; }
 .vh-kind-progress  { background: #e3f2fd; color: #1565c0; }
 .vh-proj { flex: 0 0 auto; color: #888; font-size: 11px; }
+.vh-speaker { flex: 0 0 auto; font-size: 10px; font-weight: 600; padding: 1px 6px; border-radius: 3px; }
+.vh-speaker-teacher { background: #ede7f6; color: #5e35b1; }
+.vh-speaker-student { background: #fff3e0; color: #ef6c00; }
+.vh-emotion { flex: 0 0 auto; font-size: 10px; color: #9c27b0; }
 .vh-text { flex: 1 1 auto; min-width: 0; word-break: break-word; }
 .vh-play { flex: 0 0 auto; font: inherit; font-size: 11px; color: #1565c0; background: none; border: none; cursor: pointer; }
 .vh-play:hover { text-decoration: underline; }
@@ -1061,6 +1065,7 @@ const DASHBOARD_VOICE_SCRIPT = `
 (function() {
   var KINDS = ['completed', 'awaiting', 'progress'];
   var KIND_LABEL = { completed: '完了', awaiting: '承認待ち', progress: '途中経過' };
+  var SPEAKER_LABEL = { teacher: 'ちょビ', student: 'なるこ' };
   var MAX_AGE_MS = 60000;   // これより古い発話は再生キューから捨てる (溜まった分を一気に喋らない)
   var MAX_HISTORY = 50;
 
@@ -1140,7 +1145,7 @@ const DASHBOARD_VOICE_SCRIPT = `
   }
   function play(meta) {
     playing = true;
-    setNow((meta.projectName ? meta.projectName + ': ' : '') + (meta.text || ''));
+    setNow((meta.projectName ? meta.projectName + ': ' : '') + (meta.speaker ? (SPEAKER_LABEL[meta.speaker] || meta.speaker) + '「' + (meta.text || '') + '」' : (meta.text || '')));
     applyVolume();
     var finished = false;
     function done() {
@@ -1180,6 +1185,8 @@ const DASHBOARD_VOICE_SCRIPT = `
         + '<span class="vh-time">' + esc(fmtTime(m.createdAtMs)) + '</span>'
         + '<span class="vh-kind vh-kind-' + esc(m.kind) + '">' + esc(KIND_LABEL[m.kind] || m.kind) + '</span>'
         + (m.projectName ? '<span class="vh-proj">' + esc(m.projectName) + '</span>' : '')
+        + (m.speaker ? '<span class="vh-speaker vh-speaker-' + esc(m.speaker) + '">' + esc(SPEAKER_LABEL[m.speaker] || m.speaker) + '</span>' : '')
+        + (m.emotion && m.emotion !== 'neutral' ? '<span class="vh-emotion">' + esc(m.emotion) + '</span>' : '')
         + '<span class="vh-text">' + esc(m.text) + '</span>'
         + (m.hasAudio ? '<button type="button" class="vh-play" data-vh-id="' + esc(m.id) + '">再生</button>' : '')
         + '</div>';

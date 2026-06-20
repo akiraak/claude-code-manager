@@ -69,6 +69,37 @@ test('validateVoiceEvent: detail を上限で切り詰める', () => {
   if (r.ok) assert.ok(r.value.detail!.length <= 500);
 });
 
+test('validateVoiceEvent: context を型・配列長・各要素長で安全化する', () => {
+  const r = validateVoiceEvent(
+    validVoiceBody({
+      context: {
+        userPrompt: 'u'.repeat(9999),
+        actions: Array.from({ length: 50 }, (_, i) => `コマンド実行: cmd${i} ${'x'.repeat(999)}`),
+        notes: ['a'.repeat(999), 'b', 123, '', 'c'],
+        elapsedMin: 7.6,
+      },
+    }),
+  );
+  assert.equal(r.ok, true);
+  if (!r.ok) return;
+  const ctx = r.value.context!;
+  assert.ok(ctx.userPrompt!.length <= 300);
+  assert.ok(ctx.actions!.length <= 10); // 配列長クランプ
+  assert.ok(ctx.actions!.every(a => a.length <= 200)); // 各要素クランプ
+  assert.ok(ctx.notes!.length <= 3);
+  assert.ok(ctx.notes!.every(n => typeof n === 'string')); // 非文字列は落とす
+  assert.equal(ctx.elapsedMin, 8); // round
+});
+
+test('validateVoiceEvent: context が無い / 不正型なら undefined（落とさない）', () => {
+  const a = validateVoiceEvent(validVoiceBody());
+  assert.equal(a.ok, true);
+  if (a.ok) assert.equal(a.value.context, undefined);
+  const b = validateVoiceEvent(validVoiceBody({ context: 'not-an-object' }));
+  assert.equal(b.ok, true);
+  if (b.ok) assert.equal(b.value.context, undefined);
+});
+
 test('RateLimiter: 窓内 max まで許可しそれ以降は拒否、窓が回ると復活', () => {
   const rl = new RateLimiter({ windowMs: 1000, max: 2 });
   assert.equal(rl.allow('k', 0), true);

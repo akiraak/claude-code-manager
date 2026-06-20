@@ -4,7 +4,50 @@ import fs from 'fs';
 import os from 'os';
 import path from 'path';
 
-import { findLastUserText } from './transcript';
+import {
+  describeToolUse,
+  extractWorkContext,
+  findLastUserText,
+  type NormalizedEvent,
+} from './transcript';
+
+const ev = (over: Partial<NormalizedEvent> & { kind: NormalizedEvent['kind'] }): NormalizedEvent => ({
+  timestamp: 't',
+  text: '',
+  ...over,
+});
+
+test('describeToolUse: ツールごとに人間可読なアクション文を作る', () => {
+  assert.equal(
+    describeToolUse(ev({ kind: 'tool-use', toolName: 'Bash', text: JSON.stringify({ command: 'npm test -- foo' }) })),
+    'コマンド実行: npm test -- foo',
+  );
+  assert.equal(
+    describeToolUse(ev({ kind: 'tool-use', toolName: 'Edit', text: JSON.stringify({ file_path: '/home/x/src/foo.ts' }) })),
+    'ファイル編集: foo.ts',
+  );
+  assert.equal(
+    describeToolUse(ev({ kind: 'tool-use', toolName: 'Grep', text: JSON.stringify({ pattern: 'TODO' }) })),
+    'コード検索: TODO',
+  );
+  // 未知ツール / 非 JSON 入力でも落ちない
+  assert.equal(describeToolUse(ev({ kind: 'tool-use', toolName: 'Frobnicate', text: 'not-json' })), 'Frobnicateを使用');
+});
+
+test('extractWorkContext: userPrompt / actions / notes を順序保持で抽出する', () => {
+  const events: NormalizedEvent[] = [
+    ev({ kind: 'user-text', text: '<command-name>/clear' }), // コマンドはスキップ
+    ev({ kind: 'user-text', text: 'バグを直して' }),
+    ev({ kind: 'tool-use', toolName: 'Read', text: JSON.stringify({ file_path: '/a/b/foo.ts' }) }),
+    ev({ kind: 'assistant-text', text: '原因はこのあたりにありそうです' }),
+    ev({ kind: 'assistant-text', text: '短い' }), // 10 字以下はメモにしない
+    ev({ kind: 'tool-use', toolName: 'Bash', text: JSON.stringify({ command: 'npm test' }) }),
+  ];
+  const c = extractWorkContext(events);
+  assert.equal(c.userPrompt, 'バグを直して');
+  assert.deepEqual(c.actions, ['ファイル読み取り: foo.ts', 'コマンド実行: npm test']);
+  assert.deepEqual(c.notes, ['原因はこのあたりにありそうです']);
+});
 
 function mkTmpJsonl(name: string): string {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ai-monitor-transcript-'));

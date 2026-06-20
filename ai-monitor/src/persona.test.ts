@@ -5,12 +5,13 @@ import os from 'os';
 import path from 'path';
 
 import {
-  buildPersonaPrompt,
-  cleanLine,
+  buildClaudeWorkPrompt,
+  cleanSpeech,
   DEFAULT_PERSONA,
-  fallbackLine,
+  DialogueGenerator,
+  fallbackDialogue,
   loadPersona,
-  PersonaGenerator,
+  parseDialogue,
   type PersonaInput,
 } from './persona';
 
@@ -20,55 +21,120 @@ const input = (over: Partial<PersonaInput> = {}): PersonaInput => ({
   ...over,
 });
 
-test('buildPersonaPrompt: 種別ラベル・プロジェクト・詳細・rules を反映する', () => {
-  const { system, user } = buildPersonaPrompt(DEFAULT_PERSONA, input({ detail: 'tests green' }));
-  // system に rules が全部入る
-  for (const r of DEFAULT_PERSONA.rules) assert.ok(system.includes(r), `rule 欠落: ${r}`);
-  assert.ok(system.includes('最大 50 字'));
-  // user に種別ラベル・プロジェクト・詳細
-  assert.ok(user.includes('作業完了'));
+test('buildClaudeWorkPrompt: 2 キャラ定義・ルール・JSON 形式・感情ガイドを system に入れる', () => {
+  const { system, user } = buildClaudeWorkPrompt(
+    DEFAULT_PERSONA,
+    input({
+      userPrompt: 'バグを直して',
+      actions: ['コマンド実行: npm test', 'ファイル編集: foo.ts'],
+      notes: ['テストが通った'],
+      elapsedMin: 3,
+    }),
+  );
+  // system: 2 キャラ + speaker タグ + 感情 + JSON 形式
+  assert.ok(system.includes(DEFAULT_PERSONA.teacher.name));
+  assert.ok(system.includes(DEFAULT_PERSONA.student.name));
+  assert.ok(system.includes('speaker: "teacher"'));
+  assert.ok(system.includes('speaker: "student"'));
+  assert.ok(system.includes('使用可能な感情'));
+  assert.ok(system.includes('感情の使い分け'));
+  assert.ok(system.includes('JSON配列'));
+  // user: 種別ヘッダ・経過・プロジェクト・指示・アクション・メモ
+  assert.ok(user.includes('作業完了報告'));
+  assert.ok(user.includes('3分経過'));
   assert.ok(user.includes('プロジェクト: foo'));
-  assert.ok(user.includes('詳細: tests green'));
+  assert.ok(user.includes('ユーザーの指示: バグを直して'));
+  assert.ok(user.includes('コマンド実行: npm test'));
+  assert.ok(user.includes('ファイル編集: foo.ts'));
+  assert.ok(user.includes('Claudeのメモ'));
 });
 
-test('buildPersonaPrompt: projectName / detail 無しはその行を省く', () => {
-  const { user } = buildPersonaPrompt(DEFAULT_PERSONA, { kind: 'awaiting' });
-  assert.ok(user.includes('ユーザーの承認・入力待ち'));
-  assert.ok(!user.includes('プロジェクト:'));
-  assert.ok(!user.includes('詳細:'));
+test('buildClaudeWorkPrompt: kind ごとにヘッダとフォーカスが変わる', () => {
+  const awaiting = buildClaudeWorkPrompt(DEFAULT_PERSONA, input({ kind: 'awaiting' }));
+  assert.ok(awaiting.user.includes('ユーザーの承認・入力待ち'));
+  assert.ok(awaiting.system.includes('止まっている'));
+  const progress = buildClaudeWorkPrompt(DEFAULT_PERSONA, input({ kind: 'progress' }));
+  assert.ok(progress.user.includes('作業中の途中経過'));
 });
 
-test('fallbackLine: 種別ごとに短文、projectName 無しは「セッション」', () => {
-  assert.ok(fallbackLine(DEFAULT_PERSONA, input({ kind: 'completed' })).includes('foo'));
-  assert.equal(fallbackLine(DEFAULT_PERSONA, { kind: 'awaiting' }).includes('セッション'), true);
-  assert.match(fallbackLine(DEFAULT_PERSONA, input({ kind: 'progress' })), /まだ動いてる/);
+test('buildClaudeWorkPrompt: lastConversation があれば「繰り返すな」節を足す', () => {
+  const { system } = buildClaudeWorkPrompt(
+    DEFAULT_PERSONA,
+    input({ lastConversation: ['さっきの発話A', 'さっきの発話B'] }),
+  );
+  assert.ok(system.includes('同じ表現を避けろ'));
+  assert.ok(system.includes('さっきの発話A'));
 });
 
-test('cleanLine: 改行潰し・囲み引用符剥がし・上限トリム', () => {
-  assert.equal(cleanLine('  やっ\nほー  '), 'やっ ほー');
-  assert.equal(cleanLine('「完了したよ」'), '完了したよ');
-  assert.equal(cleanLine('"done"'), 'done');
-  const long = cleanLine('あ'.repeat(100));
-  assert.ok(long.length <= 61); // 60 + 省略記号
-  assert.ok(long.endsWith('…'));
-  assert.equal(cleanLine('   '), '');
+test('parseDialogue: JSON 配列を DialogueLine[] にし、emotion を検証・最大 4 に制限', () => {
+  const raw = JSON.stringify([
+    { speaker: 'teacher', speech: 'A', tts_text: 'A', emotion: 'joy', se: null },
+    { speaker: 'student', speech: 'B', emotion: 'unknown-emotion' },
+    { speaker: 'teacher', speech: 'C', emotion: 'thinking' },
+    { speaker: 'student', speech: 'D' },
+    { speaker: 'teacher', speech: 'E' },
+  ]);
+  const lines = parseDialogue(raw, DEFAULT_PERSONA);
+  assert.equal(lines.length, 4); // 5 件 → 4 に切る
+  assert.equal(lines[0].speaker, 'teacher');
+  assert.equal(lines[0].emotion, 'joy');
+  // 未知の emotion は neutral に正規化
+  assert.equal(lines[1].emotion, 'neutral');
+  // tts_text 欠落は speech で補完
+  assert.equal(lines[3].ttsText, 'D');
+  // se は常に null
+  assert.equal(lines[0].se, null);
 });
 
-test('loadPersona: ファイル不在は DEFAULT_PERSONA', () => {
+test('parseDialogue: ```json フェンスや前後の散文があっても配列を取り出す', () => {
+  const raw = 'はい！\n```json\n[{"speaker":"teacher","speech":"やったね"}]\n```\nどうぞ';
+  const lines = parseDialogue(raw, DEFAULT_PERSONA);
+  assert.equal(lines.length, 1);
+  assert.equal(lines[0].speech, 'やったね');
+});
+
+test('parseDialogue: 単一オブジェクトも配列化、壊れた JSON は空配列', () => {
+  const one = parseDialogue('{"speaker":"student","speech":"へぇー"}', DEFAULT_PERSONA);
+  assert.equal(one.length, 1);
+  assert.equal(one[0].speaker, 'student');
+  assert.deepEqual(parseDialogue('not json at all', DEFAULT_PERSONA), []);
+});
+
+test('cleanSpeech: 改行潰し・囲み引用符剥がし。短文はそのまま（ハード切り詰めしない）', () => {
+  assert.equal(cleanSpeech('  やっ\nほー  '), 'やっ ほー');
+  assert.equal(cleanSpeech('「完了したよ」'), '完了したよ');
+  assert.equal(cleanSpeech('"done"'), 'done');
+  // 40 字程度の通常文は丸ごと残る（途切れない）
+  const normal = 'テストが全部とおって、ビルドも成功したから、これで安心して次に進めるよ。';
+  assert.equal(cleanSpeech(normal), normal);
+  assert.equal(cleanSpeech('   '), '');
+});
+
+test('fallbackDialogue: 種別ごとに 1 発話（teacher）、projectName 無しは「セッション」', () => {
+  assert.match(fallbackDialogue(DEFAULT_PERSONA, input({ kind: 'completed' }))[0].speech, /foo/);
+  const awaiting = fallbackDialogue(DEFAULT_PERSONA, { kind: 'awaiting' });
+  assert.equal(awaiting.length, 1);
+  assert.equal(awaiting[0].speaker, 'teacher');
+  assert.match(awaiting[0].speech, /セッション/);
+  assert.match(fallbackDialogue(DEFAULT_PERSONA, input({ kind: 'progress' }))[0].speech, /まだ動いてる/);
+});
+
+test('loadPersona: ファイル不在は DEFAULT_PERSONA（teacher + student）', () => {
   const p = loadPersona('/nonexistent/voice-persona.json');
   assert.deepEqual(p, DEFAULT_PERSONA);
 });
 
-test('loadPersona: 欠落フィールドは既定で補完', () => {
+test('loadPersona: 旧 1 キャラ JSON は teacher に流し込み、student は既定', () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'persona-'));
   const file = path.join(dir, 'voice-persona.json');
-  fs.writeFileSync(file, JSON.stringify({ name: 'テスト', ttsVoice: 'Aoede' }));
+  fs.writeFileSync(file, JSON.stringify({ name: 'テスト', ttsVoice: 'Charon', systemPrompt: 'あなたはテスト。' }));
   const p = loadPersona(file);
-  assert.equal(p.name, 'テスト');
-  assert.equal(p.ttsVoice, 'Aoede');
-  // 欠落は既定で埋まる
-  assert.equal(p.ttsStyle, DEFAULT_PERSONA.ttsStyle);
-  assert.deepEqual(p.rules, DEFAULT_PERSONA.rules);
+  assert.equal(p.teacher.name, 'テスト');
+  assert.equal(p.teacher.ttsVoice, 'Charon');
+  // 欠落は既定で補完
+  assert.deepEqual(p.teacher.emotions, DEFAULT_PERSONA.teacher.emotions);
+  // student は既定（なるこ）
+  assert.equal(p.student.name, DEFAULT_PERSONA.student.name);
   fs.rmSync(dir, { recursive: true, force: true });
 });
 
@@ -80,61 +146,45 @@ test('loadPersona: 壊れた JSON でも落ちず DEFAULT_PERSONA', () => {
   fs.rmSync(dir, { recursive: true, force: true });
 });
 
-test('voice-persona.json（リポ同梱）が DEFAULT を上書きせず読める', () => {
+test('voice-persona.json（リポ同梱）が 2 キャラで読める（Leda / Aoede）', () => {
   const p = loadPersona();
-  assert.equal(p.ttsVoice, 'Leda');
-  assert.ok(p.rules.length > 0);
+  assert.equal(p.teacher.ttsVoice, 'Leda');
+  assert.equal(p.student.ttsVoice, 'Aoede');
+  assert.ok(p.teacher.rules.length > 0);
+  assert.ok(Object.keys(p.teacher.emotions).length > 0);
 });
 
-test('PersonaGenerator: generate 注入で LLM 出力を整形して返す', async () => {
-  const gen = new PersonaGenerator({
-    generate: async () => '「foo、テストが全部とおったよ」',
+test('DialogueGenerator: generate 注入で JSON をパースして DialogueLine[] を返す', async () => {
+  const gen = new DialogueGenerator({
+    generate: async () =>
+      JSON.stringify([{ speaker: 'teacher', speech: 'foo、テストが全部とおったよ', emotion: 'joy' }]),
   });
   assert.equal(gen.isEnabled(), true);
-  const text = await gen.generate(input());
-  assert.equal(text, 'foo、テストが全部とおったよ');
+  const lines = await gen.generate(input());
+  assert.equal(lines.length, 1);
+  assert.equal(lines[0].speech, 'foo、テストが全部とおったよ');
+  assert.equal(lines[0].emotion, 'joy');
 });
 
-test('PersonaGenerator: 成功結果はキャッシュ、同入力で再呼び出ししない', async () => {
-  let calls = 0;
-  const gen = new PersonaGenerator({
-    generate: async () => {
-      calls++;
-      return `応答${calls}`;
-    },
-  });
-  const a = await gen.generate(input());
-  const b = await gen.generate(input());
-  assert.equal(a, b);
-  assert.equal(calls, 1);
-  // 入力が変われば別呼び出し
-  await gen.generate(input({ kind: 'awaiting' }));
-  assert.equal(calls, 2);
-});
-
-test('PersonaGenerator: キー未設定は fallback（呼び出さず）', async () => {
-  const gen = new PersonaGenerator({ apiKey: undefined });
+test('DialogueGenerator: キー未設定は fallback（呼び出さず）', async () => {
+  const gen = new DialogueGenerator({ apiKey: undefined });
   assert.equal(gen.isEnabled(), false);
-  const text = await gen.generate(input({ kind: 'completed', projectName: 'bar' }));
-  assert.equal(text, fallbackLine(DEFAULT_PERSONA, input({ kind: 'completed', projectName: 'bar' })));
+  const lines = await gen.generate(input({ kind: 'completed', projectName: 'bar' }));
+  assert.deepEqual(lines, fallbackDialogue(DEFAULT_PERSONA, input({ kind: 'completed', projectName: 'bar' })));
 });
 
-test('PersonaGenerator: 例外時は fallback でキャッシュしない（再試行可）', async () => {
-  let calls = 0;
-  const gen = new PersonaGenerator({
+test('DialogueGenerator: 例外時は fallback', async () => {
+  const gen = new DialogueGenerator({
     generate: async () => {
-      calls++;
       throw new Error('boom');
     },
   });
-  const a = await gen.generate(input());
-  assert.equal(a, fallbackLine(DEFAULT_PERSONA, input()));
-  await gen.generate(input());
-  assert.equal(calls, 2, 'fallback はキャッシュせず再試行する');
+  const lines = await gen.generate(input());
+  assert.deepEqual(lines, fallbackDialogue(DEFAULT_PERSONA, input()));
 });
 
-test('PersonaGenerator: 空応答は fallback', async () => {
-  const gen = new PersonaGenerator({ generate: async () => '   ' });
-  const text = await gen.generate(input({ kind: 'progress', projectName: 'baz' }));
-  assert.equal(text, fallbackLine(DEFAULT_PERSONA, input({ kind: 'progress', projectName: 'baz' })));
+test('DialogueGenerator: パース不能（空台本）は fallback', async () => {
+  const gen = new DialogueGenerator({ generate: async () => 'まったく JSON じゃない応答' });
+  const lines = await gen.generate(input({ kind: 'progress', projectName: 'baz' }));
+  assert.deepEqual(lines, fallbackDialogue(DEFAULT_PERSONA, input({ kind: 'progress', projectName: 'baz' })));
 });

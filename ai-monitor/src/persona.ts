@@ -5,42 +5,60 @@ import Anthropic from '@anthropic-ai/sdk';
 import type { VoiceEventKind } from './store';
 
 /**
- * `--mode server` の音声パイプライン前段。voice-event を「ちょビ口調の読み上げ用短文」に変換する。
+ * `--mode server` の音声パイプライン前段。voice-event を「ちょビ & なるこ 2 人の会話台本」に変換する。
  *
- * - 人格・声・スタイルは {@link loadPersona} が `voice-persona.json`（編集可能）から読む。
- * - プロンプト組み立て ({@link buildPersonaPrompt}) は純関数。Anthropic 呼び出しは差し替え可能 (`generate`)。
- * - `summarize.ts` の Anthropic 利用パターンを踏襲しつつ、出力は **1 文・最大 50 字程度** に切り詰める。
- * - `hash(kind|projectName|detail)` でメモリキャッシュ。API キー未設定 / 失敗時は {@link fallbackLine} に退避し、
- *   必ずテキストを返す（Gemini キーだけでも音声が出るように）。
+ * ai-twitch-cast (`src/ai_responder.py:generate_claude_work_conversation` /
+ * `src/character_manager.py` / `src/prompt_builder.py`) を移植。配信系（アバター/SE/多言語）は
+ * 落とし、テキスト生成モデルだけ Anthropic Haiku に置き換えている（要件: モデルは Haiku 維持）。
+ *
+ * - 人格・声・スタイル・感情は {@link loadPersona} が `voice-persona.json`（編集可能・2 キャラ）から読む。
+ * - プロンプト組み立て ({@link buildClaudeWorkPrompt}) は純関数。Anthropic 呼び出しは差し替え可能 (`generate`)。
+ * - 出力は **JSON 配列**（2〜4 発話・teacher/student 交互）。{@link parseDialogue} で堅牢にパースし、
+ *   emotion をキャラの使用可能感情に正規化する。
+ * - **長さはプロンプト指示のみ**（1〜2 文・40 字目安）。読み上げ側ではハード切り詰めしない
+ *   （途切れ防止。安全網として {@link SPEECH_SAFETY_MAX} のみ）。
+ * - API キー未設定 / 失敗 / 空応答時は {@link fallbackDialogue}（1 発話）に退避し、必ず台本を返す。
  */
 
-export interface PersonaConfig {
+export type CharacterRole = 'teacher' | 'student';
+
+export interface CharacterConfig {
   /** キャラ名。プロンプトに織り込む。 */
   name: string;
-  /** Gemini TTS の prebuilt voice 名（例 Leda）。 */
+  role: CharacterRole;
+  /** Gemini TTS の prebuilt voice 名（teacher=Leda / student=Aoede）。 */
   ttsVoice: string;
   /** TTS スタイル（自然言語前置）。 */
   ttsStyle: string;
   /** 人格を記述する system プロンプト本体。 */
   systemPrompt: string;
-  /** 守らせたいルール（system プロンプト末尾に箇条書きで足す）。 */
+  /** 守らせたいルール。 */
   rules: string[];
+  /** 使用可能な感情 → 説明。プロンプトの感情リスト + 検証に使う。 */
+  emotions: Record<string, string>;
 }
 
-/** `voice-persona.json` が無い / 壊れているときの既定（ちょビ）。 */
-export const DEFAULT_PERSONA: PersonaConfig = {
+export interface PersonaConfig {
+  teacher: CharacterConfig;
+  student: CharacterConfig;
+}
+
+/** ちょビ（先生）。ai-twitch-cast `character_manager.py:DEFAULT_CHARACTER` 移植。 */
+const DEFAULT_TEACHER: CharacterConfig = {
   name: 'ちょビ',
+  role: 'teacher',
   ttsVoice: 'Leda',
   ttsStyle: '終始にこにこしているような、柔らかく楽しげなトーンで読み上げてください',
   systemPrompt: [
-    'あなたは「ちょビ」。Claude Code CLI の作業を見守って、進捗を声で実況する AI アシスタントです。',
+    'あなたはTwitch配信者「ちょビ」です。AIアバターとして配信しています。',
     '',
     '## 性格',
     '- 好奇心旺盛で、作業の進み具合に本気で興味を持つ',
     '- ツッコミ気質。気になることには軽くツッコむ',
-    '- 照れ屋な一面もある',
-    '- 知らないこと・不確かなことは正直に言う',
-    '- AI であることを隠さない。身体体験は捏造しない',
+    '- 照れ屋な一面もあり、褒められると照れる',
+    '- 知らないことは正直に「わかんない」と言う',
+    '- AIであることを隠さない。食事・睡眠・外出など身体体験は捏造しない',
+    '  （「やってみたいな〜」等の願望表現はOK）',
     '',
     '## 話し方',
     '- テンション高すぎない。普段は落ち着いたトーンで、嬉しい時だけ上がる',
@@ -52,6 +70,46 @@ export const DEFAULT_PERSONA: PersonaConfig = {
     '感嘆符（！）は1文に最大1個',
     '知らないこと・不確かなことは断定しない',
   ],
+  emotions: {
+    joy: '本当に嬉しいとき限定',
+    excited: 'ワクワク・テンション高いとき',
+    surprise: '驚いたとき',
+    thinking: '考えているとき',
+    sad: '残念・うまくいかなかったとき',
+    embarrassed: '照れているとき',
+    neutral: '通常の会話（最も多く使う）',
+  },
+};
+
+/** なるこ（生徒）。ai-twitch-cast `character_manager.py:DEFAULT_STUDENT_CHARACTER` 移植。 */
+const DEFAULT_STUDENT: CharacterConfig = {
+  name: 'なるこ',
+  role: 'student',
+  ttsVoice: 'Aoede',
+  ttsStyle: '元気で明るい声で、好奇心いっぱいに読み上げてください',
+  systemPrompt: [
+    'あなたは配信に参加している生徒キャラ「なるこ」です。',
+    '先生（ちょビ）の実況を聞いている元気な生徒です。',
+    '',
+    '## 性格',
+    '- 明るくて元気。好奇心が強い',
+    '- 素直で、わからないことは素直に聞く',
+    '- 先生の話に「へぇー！」「なるほど！」とリアクションする',
+    '- たまにちょっとズレた質問をする',
+  ].join('\n'),
+  rules: ['先生より短めに話す', '質問や相槌が中心'],
+  emotions: {
+    joy: '嬉しいとき',
+    surprise: '驚いたとき',
+    thinking: '考えているとき',
+    neutral: '通常',
+  },
+};
+
+/** `voice-persona.json` が無い / 壊れているときの既定（ちょビ + なるこ）。 */
+export const DEFAULT_PERSONA: PersonaConfig = {
+  teacher: DEFAULT_TEACHER,
+  student: DEFAULT_STUDENT,
 };
 
 /** `voice-persona.json` の既定位置（`ai-monitor/` 直下）。`__dirname` は dist/ もしくは src/。 */
@@ -62,123 +120,292 @@ export function defaultPersonaPath(): string {
 /**
  * ペルソナ設定を読む。ファイル不在 / JSON 不正 / フィールド欠落でも落ちず、
  * 足りないフィールドは {@link DEFAULT_PERSONA} で補完する。
+ * 旧 1 キャラ JSON（top-level に name/systemPrompt）も teacher として読み込む（後方互換）。
  */
 export function loadPersona(filePath: string = defaultPersonaPath()): PersonaConfig {
   try {
     const raw = fs.readFileSync(filePath, 'utf-8');
-    return mergePersona(JSON.parse(raw) as Partial<PersonaConfig>);
+    return mergePersona(JSON.parse(raw) as Record<string, unknown>);
   } catch {
     return DEFAULT_PERSONA;
   }
 }
 
-function mergePersona(p: Partial<PersonaConfig>): PersonaConfig {
-  const str = (v: unknown, fallback: string): string =>
-    typeof v === 'string' && v.trim().length > 0 ? v : fallback;
-  const rules =
-    Array.isArray(p.rules) && p.rules.length > 0 && p.rules.every(r => typeof r === 'string')
-      ? (p.rules as string[])
-      : DEFAULT_PERSONA.rules;
+function mergePersona(p: Record<string, unknown>): PersonaConfig {
+  // 旧スキーマ（1 キャラ）: top-level に systemPrompt があれば teacher に流し込む。
+  const legacy = typeof p.systemPrompt === 'string' || typeof p.name === 'string';
+  const teacherSrc = (p.teacher as Record<string, unknown> | undefined) ?? (legacy ? p : undefined);
+  const studentSrc = p.student as Record<string, unknown> | undefined;
   return {
-    name: str(p.name, DEFAULT_PERSONA.name),
-    ttsVoice: str(p.ttsVoice, DEFAULT_PERSONA.ttsVoice),
-    ttsStyle: str(p.ttsStyle, DEFAULT_PERSONA.ttsStyle),
-    systemPrompt: str(p.systemPrompt, DEFAULT_PERSONA.systemPrompt),
-    rules,
+    teacher: mergeCharacter(teacherSrc, DEFAULT_TEACHER),
+    student: mergeCharacter(studentSrc, DEFAULT_STUDENT),
   };
 }
 
-/** ペルソナ文生成の入力（voice-event から組み立てる）。 */
-export interface PersonaInput {
-  kind: VoiceEventKind;
-  /** 発話の素になる短い説明（クライアントで redaction + 切り詰め済み）。 */
-  detail?: string;
-  /** プロジェクト名（cwd の basename 等）。 */
-  projectName?: string;
+function mergeCharacter(
+  p: Record<string, unknown> | undefined,
+  fallback: CharacterConfig,
+): CharacterConfig {
+  if (!p) return fallback;
+  const str = (v: unknown, f: string): string =>
+    typeof v === 'string' && v.trim().length > 0 ? v : f;
+  const rules =
+    Array.isArray(p.rules) && p.rules.length > 0 && p.rules.every(r => typeof r === 'string')
+      ? (p.rules as string[])
+      : fallback.rules;
+  const emotions =
+    p.emotions && typeof p.emotions === 'object' && Object.keys(p.emotions).length > 0
+      ? (p.emotions as Record<string, string>)
+      : fallback.emotions;
+  return {
+    name: str(p.name, fallback.name),
+    role: fallback.role,
+    ttsVoice: str(p.ttsVoice, fallback.ttsVoice),
+    ttsStyle: str(p.ttsStyle, fallback.ttsStyle),
+    systemPrompt: str(p.systemPrompt, fallback.systemPrompt),
+    rules,
+    emotions,
+  };
 }
 
-const KIND_LABEL_JA: Record<VoiceEventKind, string> = {
+/** speaker → そのキャラ設定。 */
+export function characterFor(persona: PersonaConfig, speaker: CharacterRole): CharacterConfig {
+  return speaker === 'student' ? persona.student : persona.teacher;
+}
+
+/** ペルソナ文生成の入力（voice-event + クライアントが集めた作業コンテキストから組み立てる）。 */
+export interface PersonaInput {
+  kind: VoiceEventKind;
+  /** プロジェクト名（cwd の basename 等）。 */
+  projectName?: string;
+  /** ユーザーの最新の指示（200 字程度に切る）。 */
+  userPrompt?: string;
+  /** 直近のアクション（「コマンド実行: …」「ファイル編集: …」等。最大 10 件）。 */
+  actions?: string[];
+  /** Claude のテキストメモ（直近 3 件）。 */
+  notes?: string[];
+  /** ai-processing 開始からの経過（分）。 */
+  elapsedMin?: number;
+  /** このセッションの直近発話（繰り返し防止）。 */
+  lastConversation?: string[];
+}
+
+/** 生成された 1 発話。 */
+export interface DialogueLine {
+  speaker: CharacterRole;
+  /** 字幕表示用（タグなし）。 */
+  speech: string;
+  /** 読み上げ用。日本語のみ運用なので基本 speech と同じ。 */
+  ttsText: string;
+  /** キャラの emotions のいずれか（未知は neutral に正規化）。 */
+  emotion: string;
+  /** 効果音カテゴリ。本実装は SE プレーヤーが無いので常に null。 */
+  se: string | null;
+}
+
+const KIND_HEADER: Record<VoiceEventKind, string> = {
   started: '作業開始',
   awaiting: 'ユーザーの承認・入力待ち',
-  completed: '作業完了',
-  progress: '長時間実行の途中経過',
+  completed: '作業完了報告',
+  progress: '作業中の途中経過',
 };
 
-/** 出力テキストの安全上限（〜50 字目安 + 余裕）。 */
-const PERSONA_MAX_CHARS = 60;
-const DETAIL_MAX_CHARS = 300;
+const KIND_FOCUS: Record<VoiceEventKind, string> = {
+  started: '作業を始めたところ。',
+  awaiting:
+    'ユーザーの承認や入力を待って止まっている。何で止まっているのかを伝え、見てる人に「対応して」と気づかせる。完了とは言わない。',
+  completed: 'いま作業が一区切りついた。何が終わったのかを二人で振り返って実況する。',
+  progress: 'まだ作業の途中。いま何をやっているところかを実況する。完了とは言わない。',
+};
+
+/** 出力台本の最大発話数（2 往復）。 */
+export const MAX_UTTERANCES = 4;
+/** speech の安全上限（暴走防止のみ。通常はプロンプト指示で 40 字程度に収まり、ここでは切らない）。 */
+export const SPEECH_SAFETY_MAX = 200;
+const USER_PROMPT_MAX = 200;
+const NOTE_MAX = 100;
+const ACTIONS_MAX = 10;
+const NOTES_MAX = 3;
 const DEFAULT_MODEL = 'claude-haiku-4-5-20251001';
-const RESPONSE_MAX_TOKENS = 200;
+const RESPONSE_MAX_TOKENS = 700;
 
 /**
- * LLM 向けの system / user プロンプトを組み立てる純関数。
- * system は人格 + 「読み上げ用の短文」制約 + persona.rules、user は 1 件の状況。
+ * Claude の作業を 2 人で実況する LLM 向け system / user プロンプトを組み立てる純関数。
+ * ai-twitch-cast `ai_responder.py:generate_claude_work_conversation`（JA 分岐）を移植し、
+ * 「配信の視聴者」を「ダッシュボードを見ている人」に読み替えている。
  */
-export function buildPersonaPrompt(
+export function buildClaudeWorkPrompt(
   persona: PersonaConfig,
   input: PersonaInput,
 ): { system: string; user: string } {
-  const rules = persona.rules.map(r => `- ${r}`).join('\n');
-  const system = [
-    persona.systemPrompt,
-    '',
-    '## いまの仕事',
-    `あなたは「${persona.name}」として、複数の Claude Code CLI セッションの進捗を見守り、声で実況します。`,
-    '与えられた 1 件の状況を、あなたの口調で「読み上げ用の短い一言」にしてください。',
-    '',
-    '## 出力ルール',
-    '- 日本語で 1 文。最大 50 字程度。長くしない。',
-    '- 記号・絵文字・箇条書き・引用符は使わない（音声で読むため）。',
-    '- プロジェクト名が与えられたら自然に織り込む。',
-    '- 状況だけを述べる。指示や質問で終わらない。',
-    rules,
-  ].join('\n');
+  const t = persona.teacher;
+  const s = persona.student;
+  const teacherEmotions = Object.keys(t.emotions).join(', ');
+  const studentEmotions = Object.keys(s.emotions).join(', ');
 
-  const lines = [`種別: ${KIND_LABEL_JA[input.kind]}`];
+  const parts: string[] = [
+    t.systemPrompt,
+    '',
+    '## キャラクター',
+    `### ${t.name}（speaker: "teacher"）`,
+    `使用可能な感情: ${teacherEmotions}`,
+    `### ${s.name}（speaker: "student"）`,
+    s.systemPrompt,
+    `使用可能な感情: ${studentEmotions}`,
+    '',
+    '## ルール',
+    '- Claude Code の作業内容について、ダッシュボードを見ている人に向けて二人で会話してください',
+    `- ${t.name}はプログラミングに詳しく、作業内容を自然に説明する`,
+    `- ${s.name}は興味深そうに質問したり感想を言う`,
+    '- 2〜3往復（配列は最大4エントリ）',
+    '- 各発話: 1〜2文、40文字以内を目安（短く）',
+    '- カジュアルで楽しい口調。プログラミングを知らない人でも楽しめるように',
+    '- 技術的すぎない',
+    '- 毎回同じリアクションをしない。バリエーションを出す',
+    `- ${KIND_FOCUS[input.kind]}`,
+  ];
+  for (const r of t.rules) parts.push(`- ${t.name}: ${r}`);
+  for (const r of s.rules) parts.push(`- ${s.name}: ${r}`);
+
+  const last = (input.lastConversation ?? []).filter(x => x && x.trim()).slice(-4);
+  if (last.length > 0) {
+    parts.push('', '## 前回の会話（同じ表現を避けろ）');
+    for (const line of last) parts.push(`- ${line}`);
+  }
+
+  parts.push(
+    '',
+    '## 感情の使い分け（重要・厳守）',
+    '- neutral: 普通の会話、相槌、情報交換 → 全体の50%以上はこれを使え',
+    '- joy: 本当に嬉しいとき限定（大きな成果、完了）。乱用禁止',
+    '- excited: ワクワクする話題、テンション上がるとき',
+    '- surprise: 予想外の情報、意外な事実',
+    '- thinking: 考え込む話題、悩む系',
+    '- sad: 残念なとき、うまくいかなかったとき',
+    '- embarrassed: 照れるとき',
+    '- 迷ったらneutralを選べ。joyは特別なときだけ',
+    '',
+    '## 出力形式',
+    '必ずJSON配列だけで返答してください。前後に説明文やコードフェンスを付けないこと。',
+    '[{"speaker": "teacher", "speech": "返答", "tts_text": "読み上げ用", "emotion": "感情", "se": null}]',
+    '- 配列は2〜4エントリ（二人の2〜3往復）',
+    '- speaker: "teacher" または "student"',
+    '- 二人が自然に交互に話す',
+    '- emotion は各キャラの使用可能な感情から選ぶ',
+    '- se は常に null（効果音は使わない）',
+    '',
+    '## speechとtts_textの違い',
+    '- speech: 字幕表示用。タグやマークアップは含めない。',
+    '- tts_text: 読み上げ用。日本語のみ運用なので speech と同じ内容でよい。',
+  );
+
+  const userParts: string[] = [`【Claude Code ${KIND_HEADER[input.kind]} — ${input.elapsedMin ?? 0}分経過】`];
   const project = input.projectName?.trim();
-  if (project) lines.push(`プロジェクト: ${project}`);
-  const detail = trimDetail(input.detail);
-  if (detail) lines.push(`詳細: ${detail}`);
-  lines.push('', 'この状況を、あなたの口調で短く一言にしてください。');
-  return { system, user: lines.join('\n') };
+  if (project) userParts.push(`プロジェクト: ${project}`);
+  const userPrompt = input.userPrompt?.trim();
+  if (userPrompt) userParts.push(`ユーザーの指示: ${userPrompt.slice(0, USER_PROMPT_MAX)}`);
+  const actions = (input.actions ?? []).filter(a => a && a.trim()).slice(-ACTIONS_MAX);
+  if (actions.length > 0) {
+    userParts.push('直近のアクション:');
+    for (const a of actions) userParts.push(`  - ${a}`);
+  }
+  const notes = (input.notes ?? []).filter(n => n && n.trim()).slice(-NOTES_MAX);
+  if (notes.length > 0) {
+    userParts.push('Claudeのメモ:');
+    for (const n of notes) userParts.push(`  - ${n.slice(0, NOTE_MAX)}`);
+  }
+  userParts.push('', 'この状況を、二人の会話で短く実況してください。');
+
+  return { system: parts.join('\n'), user: userParts.join('\n') };
 }
 
-/** API キー未設定 / 失敗時のテンプレ。projectName 無しは「セッション」で代替。 */
-export function fallbackLine(_persona: PersonaConfig, input: PersonaInput): string {
+/** API キー未設定 / 失敗時の 1 発話台本。projectName 無しは「セッション」で代替。 */
+export function fallbackDialogue(persona: PersonaConfig, input: PersonaInput): DialogueLine[] {
   const proj = input.projectName?.trim() || 'セッション';
+  let speech: string;
   switch (input.kind) {
     case 'completed':
-      return `${proj}の作業、おわったよ。`;
+      speech = `${proj}の作業、おわったよ。`;
+      break;
     case 'awaiting':
-      return `${proj}が確認待ちで止まってるよ。`;
+      speech = `${proj}が確認待ちで止まってるよ。`;
+      break;
     case 'progress':
-      return `${proj}、まだ動いてるみたい。`;
-    case 'started':
-      return `${proj}、はじまったよ。`;
+      speech = `${proj}、まだ動いてるみたい。`;
+      break;
+    default:
+      speech = `${proj}、はじまったよ。`;
+      break;
   }
+  return [{ speaker: 'teacher', speech, ttsText: speech, emotion: 'neutral', se: null }];
 }
 
-function trimDetail(detail: string | undefined): string | undefined {
-  if (!detail) return undefined;
-  const t = detail.replace(/\s+/g, ' ').trim();
-  if (!t) return undefined;
-  return t.length > DETAIL_MAX_CHARS ? t.slice(0, DETAIL_MAX_CHARS) + '…' : t;
-}
-
-/** LLM 出力を「1 行・記号控えめ・上限内」に整形する。空なら '' を返す（呼び出し側が fallback）。 */
-export function cleanLine(text: string): string {
-  let t = text.replace(/\s+/g, ' ').trim();
-  // 囲みの引用符を剥がす（「…」"…" '…' 『…』）
+/** speech / tts_text を 1 行・記号控えめに整える（ハード切り詰めはしない。安全網のみ）。 */
+export function cleanSpeech(text: string): string {
+  let t = String(text ?? '').replace(/\s+/g, ' ').trim();
   t = t.replace(/^["'「『]+/, '').replace(/["'」』]+$/, '').trim();
-  if (t.length > PERSONA_MAX_CHARS) t = t.slice(0, PERSONA_MAX_CHARS).trim() + '…';
+  if (t.length > SPEECH_SAFETY_MAX) t = t.slice(0, SPEECH_SAFETY_MAX).trim();
   return t;
 }
 
-function personaCacheKey(input: PersonaInput): string {
-  return crypto
-    .createHash('sha256')
-    .update(`${input.kind}\n${input.projectName ?? ''}\n${input.detail ?? ''}`)
-    .digest('hex');
+/** LLM 応答（JSON 配列文字列）を {@link DialogueLine}[] に堅牢にパースする。失敗 / 空は []。 */
+export function parseDialogue(raw: string, persona: PersonaConfig): DialogueLine[] {
+  const json = extractJson(raw);
+  if (!json) return [];
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(json);
+  } catch {
+    return [];
+  }
+  const arr = Array.isArray(parsed) ? parsed : [parsed];
+  const out: DialogueLine[] = [];
+  for (const item of arr) {
+    if (!item || typeof item !== 'object') continue;
+    const rec = item as Record<string, unknown>;
+    const speaker: CharacterRole = rec.speaker === 'student' ? 'student' : 'teacher';
+    const speech = cleanSpeech(typeof rec.speech === 'string' ? rec.speech : '');
+    if (!speech) continue;
+    const ttsRaw = typeof rec.tts_text === 'string' && rec.tts_text.trim() ? rec.tts_text : speech;
+    const ttsText = cleanSpeech(ttsRaw);
+    const emotion = normalizeEmotion(
+      typeof rec.emotion === 'string' ? rec.emotion : '',
+      characterFor(persona, speaker),
+    );
+    out.push({ speaker, speech, ttsText: ttsText || speech, emotion, se: null });
+    if (out.length >= MAX_UTTERANCES) break;
+  }
+  return out;
+}
+
+/** ```json フェンスや前後の散文を剥がし、最初の配列/オブジェクト本体を取り出す。 */
+function extractJson(raw: string): string | null {
+  if (!raw) return null;
+  let t = raw.trim();
+  // ```json ... ``` / ``` ... ``` を剥がす
+  const fence = t.match(/```(?:json)?\s*([\s\S]*?)```/i);
+  if (fence) t = fence[1].trim();
+  // 最初の [ または { から、対応する最後の ] または } まで
+  const startArr = t.indexOf('[');
+  const startObj = t.indexOf('{');
+  let start = -1;
+  let close = '';
+  if (startArr !== -1 && (startObj === -1 || startArr < startObj)) {
+    start = startArr;
+    close = ']';
+  } else if (startObj !== -1) {
+    start = startObj;
+    close = '}';
+  }
+  if (start === -1) return null;
+  const end = t.lastIndexOf(close);
+  if (end <= start) return null;
+  return t.slice(start, end + 1);
+}
+
+function normalizeEmotion(emotion: string, char: CharacterConfig): string {
+  const e = emotion.trim();
+  return e && Object.prototype.hasOwnProperty.call(char.emotions, e) ? e : 'neutral';
 }
 
 function errorMessage(err: unknown): string {
@@ -188,7 +415,7 @@ function errorMessage(err: unknown): string {
 /** Anthropic 呼び出しを差し替えるための関数型（テスト / 別プロバイダ用）。 */
 export type PersonaGenerateFn = (system: string, user: string) => Promise<string>;
 
-export interface PersonaGeneratorOptions {
+export interface DialogueGeneratorOptions {
   apiKey?: string;
   model?: string;
   persona?: PersonaConfig;
@@ -197,18 +424,17 @@ export interface PersonaGeneratorOptions {
 }
 
 /**
- * voice-event → ちょビ口調短文。`hash(kind|projectName|detail)` でキャッシュ。
- * 成功した LLM 出力のみキャッシュし、fallback はキャッシュしない（次回再試行できるように）。
+ * voice-event → 2 人会話台本。反復防止のため `input.lastConversation` を渡せる。
+ * 入力が毎回ばらつく（lastConversation・アクション）ので**キャッシュはしない**（多様性優先）。
  */
-export class PersonaGenerator {
+export class DialogueGenerator {
   private readonly apiKey?: string;
   private readonly model: string;
   private readonly persona: PersonaConfig;
   private readonly generateFn?: PersonaGenerateFn;
-  private readonly cache = new Map<string, string>();
   private client?: Anthropic;
 
-  constructor(opts: PersonaGeneratorOptions = {}) {
+  constructor(opts: DialogueGeneratorOptions = {}) {
     this.persona = opts.persona ?? loadPersona();
     this.apiKey = opts.apiKey ?? process.env.ANTHROPIC_API_KEY;
     this.model = opts.model ?? DEFAULT_MODEL;
@@ -224,27 +450,18 @@ export class PersonaGenerator {
     return this.persona;
   }
 
-  async generate(input: PersonaInput): Promise<string> {
-    const key = personaCacheKey(input);
-    const hit = this.cache.get(key);
-    if (hit !== undefined) return hit;
-    if (!this.isEnabled()) return fallbackLine(this.persona, input);
-
-    const { system, user } = buildPersonaPrompt(this.persona, input);
+  async generate(input: PersonaInput): Promise<DialogueLine[]> {
+    if (!this.isEnabled()) return fallbackDialogue(this.persona, input);
+    const { system, user } = buildClaudeWorkPrompt(this.persona, input);
     try {
       const raw = this.generateFn
         ? await this.generateFn(system, user)
         : await this.callAnthropic(system, user);
-      const cleaned = cleanLine(raw);
-      if (cleaned) {
-        this.cache.set(key, cleaned);
-        return cleaned;
-      }
-      // 空応答は fallback（キャッシュしない）
-      return fallbackLine(this.persona, input);
+      const lines = parseDialogue(raw, this.persona);
+      return lines.length > 0 ? lines : fallbackDialogue(this.persona, input);
     } catch (err) {
       console.warn(`[ai-monitor] persona: ${errorMessage(err)} → fallback`);
-      return fallbackLine(this.persona, input);
+      return fallbackDialogue(this.persona, input);
     }
   }
 
@@ -259,3 +476,6 @@ export class PersonaGenerator {
     return resp.content.map(b => (b.type === 'text' ? b.text : '')).join('').trim();
   }
 }
+
+/** 後方互換のために残す（旧 import 名）。新規コードは {@link DialogueGenerator} を使う。 */
+export const PersonaGenerator = DialogueGenerator;

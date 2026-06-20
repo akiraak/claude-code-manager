@@ -5,6 +5,7 @@ import {
   AggregateStore,
   type SnapshotEntry,
   type SnapshotPayload,
+  type VoiceEventContext,
   type VoiceEventKind,
   type VoiceEventPayload,
 } from './store';
@@ -22,6 +23,11 @@ export const MAX_EVENTS = 200;
 const MAX_CLIENT_ID = 128;
 const MAX_PROJECT_DIR = 512;
 const MAX_DETAIL = 500;
+// 2 人会話の素 context。配列長・各要素長を制限して payload 暴発を防ぐ。
+const MAX_CONTEXT_USER_PROMPT = 300;
+const MAX_CONTEXT_ITEM = 200;
+const MAX_CONTEXT_ACTIONS = 10;
+const MAX_CONTEXT_NOTES = 3;
 
 const ACTIVITY_STATES: readonly ActivityState[] = [
   'ai-processing',
@@ -116,8 +122,34 @@ export function validateVoiceEvent(body: unknown): ValidationResult<VoiceEventPa
     detail,
     projectName: typeof body.projectName === 'string' ? body.projectName : undefined,
     state: body.state as ActivityState | undefined,
+    context: sanitizeContext(body.context),
   };
   return { ok: true, value };
+}
+
+/** voice-event の context を型・配列長・各要素長で安全化する（不正は無視して落とさない）。 */
+function sanitizeContext(raw: unknown): VoiceEventContext | undefined {
+  if (!isRecord(raw)) return undefined;
+  const strItems = (v: unknown, maxItems: number): string[] | undefined => {
+    if (!Array.isArray(v)) return undefined;
+    const out = v
+      .filter((x): x is string => typeof x === 'string' && x.trim().length > 0)
+      .slice(0, maxItems)
+      .map(x => x.slice(0, MAX_CONTEXT_ITEM));
+    return out.length > 0 ? out : undefined;
+  };
+  const ctx: VoiceEventContext = {};
+  if (typeof raw.userPrompt === 'string' && raw.userPrompt.trim()) {
+    ctx.userPrompt = raw.userPrompt.slice(0, MAX_CONTEXT_USER_PROMPT);
+  }
+  const actions = strItems(raw.actions, MAX_CONTEXT_ACTIONS);
+  if (actions) ctx.actions = actions;
+  const notes = strItems(raw.notes, MAX_CONTEXT_NOTES);
+  if (notes) ctx.notes = notes;
+  if (typeof raw.elapsedMin === 'number' && Number.isFinite(raw.elapsedMin) && raw.elapsedMin >= 0) {
+    ctx.elapsedMin = Math.min(Math.round(raw.elapsedMin), 100000);
+  }
+  return Object.keys(ctx).length > 0 ? ctx : undefined;
 }
 
 /** 固定窓レート制限。`key` 単位で `windowMs` あたり `max` 回まで許可する。 */

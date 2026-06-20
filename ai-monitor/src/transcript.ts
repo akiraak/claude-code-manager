@@ -412,6 +412,80 @@ export function summarizeTail(events: NormalizedEvent[]): TailSummary {
   };
 }
 
+/** 2 人会話の素になる作業コンテキスト（ai-twitch-cast `TranscriptSummary` 相当）。 */
+export interface WorkContext {
+  /** ユーザーの最新の指示。 */
+  userPrompt?: string;
+  /** 実行されたアクションの説明文（順序保持・呼び出し側で末尾 N 件に絞る）。 */
+  actions: string[];
+  /** アシスタントのテキストメモ（10 字超のみ・順序保持）。 */
+  notes: string[];
+}
+
+function toolUseBasename(p: string): string {
+  const parts = p.split(/[\\/]/);
+  return parts[parts.length - 1] || p;
+}
+
+/**
+ * tool-use イベントを人間可読なアクション文に変換する。
+ * `ev.text` は tool input の JSON 文字列（{@link readTailEvents} が格納）。
+ * ai-twitch-cast `claude_watcher.py:_describe_tool_use` 移植。
+ */
+export function describeToolUse(ev: NormalizedEvent): string {
+  const tool = ev.toolName ?? '';
+  let input: Record<string, unknown> = {};
+  try {
+    const parsed = JSON.parse(ev.text || '{}');
+    if (parsed && typeof parsed === 'object') input = parsed as Record<string, unknown>;
+  } catch {
+    /* 入力が JSON でなければ空扱い */
+  }
+  const str = (k: string): string => (typeof input[k] === 'string' ? (input[k] as string) : '');
+  switch (tool) {
+    case 'Bash':
+      return `コマンド実行: ${str('command').slice(0, 80)}`;
+    case 'Edit':
+    case 'MultiEdit':
+      return `ファイル編集: ${toolUseBasename(str('file_path'))}`;
+    case 'Write':
+      return `ファイル作成: ${toolUseBasename(str('file_path'))}`;
+    case 'Read':
+      return `ファイル読み取り: ${toolUseBasename(str('file_path'))}`;
+    case 'Grep':
+    case 'Glob':
+      return `コード検索: ${str('pattern').slice(0, 50)}`;
+    case 'Agent':
+    case 'Task':
+      return `サブエージェント: ${str('description').slice(0, 50)}`;
+    default:
+      return tool ? `${tool}を使用` : '';
+  }
+}
+
+/**
+ * 時系列イベント列から「ユーザー指示 / アクション列 / メモ」を抽出する純関数。
+ * ai-twitch-cast `claude_watcher.py:TranscriptParser` 移植（差分追跡はせず、渡された窓全体を見る）。
+ */
+export function extractWorkContext(events: NormalizedEvent[]): WorkContext {
+  let userPrompt: string | undefined;
+  const actions: string[] = [];
+  const notes: string[] = [];
+  for (const ev of events) {
+    if (ev.kind === 'user-text' && !ev.isMeta) {
+      const t = ev.text?.trim();
+      if (t && !t.startsWith('<command-name>') && !t.startsWith('<local-command')) userPrompt = t;
+    } else if (ev.kind === 'tool-use') {
+      const a = describeToolUse(ev);
+      if (a) actions.push(a);
+    } else if (ev.kind === 'assistant-text') {
+      const t = ev.text?.trim();
+      if (t && t.length > 10) notes.push(t);
+    }
+  }
+  return { userPrompt, actions, notes };
+}
+
 export interface LastUserTextRef {
   /** 表示用に整形済み (XML 包み剥がし / local-command-stdout 抽出済み) */
   text: string;

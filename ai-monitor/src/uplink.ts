@@ -7,10 +7,11 @@ import type { ActivityState, MonitorEntry } from './state';
 import type {
   SnapshotEntry,
   SnapshotPayload,
+  VoiceEventContext,
   VoiceEventKind,
   VoiceEventPayload,
 } from './store';
-import type { NormalizedEvent, TailSummary } from './transcript';
+import { extractWorkContext, type NormalizedEvent, type TailSummary } from './transcript';
 
 /**
  * `--mode client` の uplink エージェント。
@@ -41,6 +42,12 @@ export const SNAPSHOT_MAX_EVENTS = 150;
 const EVENT_TEXT_MAX = 1200;
 const TAIL_TEXT_MAX = 2000;
 const VOICE_DETAIL_MAX = 300;
+// 2 人会話の素 context のクライアント側上限（ingest 側でも再検証される）。
+const CONTEXT_USER_PROMPT_MAX = 200;
+const CONTEXT_ITEM_MAX = 160;
+const CONTEXT_ACTIONS_MAX = 10;
+const CONTEXT_NOTES_MAX = 3;
+const NOTE_MIN_LEN = 10;
 
 const SNAPSHOT_BASE_BACKOFF_MS = 5000;
 const SNAPSHOT_MAX_BACKOFF_MS = 60_000;
@@ -226,6 +233,12 @@ export interface VoiceSessionInput {
   lastUserText?: string;
   /** 承認待ち/完了/途中経過の発話の素 (redaction 済み)。 */
   lastAssistantText?: string;
+  /** 2 人会話の素: ユーザー指示 (redaction 済み)。 */
+  userPrompt?: string;
+  /** 2 人会話の素: 直近アクション列 (redaction 済み・末尾 N 件)。 */
+  actions?: string[];
+  /** 2 人会話の素: Claude のメモ (redaction 済み・末尾 N 件)。 */
+  notes?: string[];
   /**
    * 最後の assistant メッセージの timestamp。**ターンの識別子**として dedup に使う
    * (揺れ=同一 timestamp / 別ターン=新 timestamp)。送信はしない (client 内 dedup 専用)。
@@ -240,6 +253,23 @@ export interface VoiceEventOut {
   kind: VoiceEventKind;
   detail?: string;
   state: ActivityState;
+  /** 2 人会話の素になる作業コンテキスト。 */
+  context?: VoiceEventContext;
+}
+
+/** セッション入力 + 経過分から会話 context を組み立てる（空なら undefined）。 */
+function buildVoiceContext(s: VoiceSessionInput, elapsedMin: number): VoiceEventContext | undefined {
+  const ctx: VoiceEventContext = {};
+  if (s.userPrompt) ctx.userPrompt = s.userPrompt;
+  if (s.actions && s.actions.length > 0) ctx.actions = s.actions;
+  if (s.notes && s.notes.length > 0) ctx.notes = s.notes;
+  ctx.elapsedMin = elapsedMin;
+  return ctx;
+}
+
+function elapsedMinSince(sinceMs: number | undefined, nowMs: number): number {
+  if (sinceMs === undefined) return 0;
+  return Math.max(0, Math.round((nowMs - sinceMs) / 60_000));
 }
 
 interface DetectorSessionState {
@@ -314,6 +344,7 @@ export class VoiceEventDetector {
 
       if (s.state !== prev.state) {
         const ev = transitionEvent(prev.state, s);
+        if (ev) ev.context = buildVoiceContext(s, elapsedMinSince(prev.aiSinceMs, nowMs));
         let lastSpokenSig = prev.lastSpokenSig;
         if (ev) {
           const sig = spokenTransitionSig(ev, s);
@@ -349,6 +380,7 @@ export class VoiceEventDetector {
             kind: 'progress',
             detail: s.lastAssistantText,
             state: s.state,
+            context: buildVoiceContext(s, elapsedMinSince(since, nowMs)),
           });
           // progress は周期通知なので lastSpokenSig は更新しない (completed/awaiting の重複判定に影響させない)。
           this.states.set(s.projectDir, { state: s.state, aiSinceMs: since, lastProgressMs: nowMs, lastSpokenSig: prev.lastSpokenSig });
@@ -667,19 +699,36 @@ export function createUplinkRunner(config: ClientConfig, deps: UplinkRunnerDeps 
 
       await sendSnapshots(mirrored);
 
-      const inputs: VoiceSessionInput[] = mirrored.map(e => ({
-        projectDir: e.projectDir,
-        sessionId: e.transcript?.sessionId,
-        projectName: path.basename(e.cwd) || e.cwd,
-        state: e.state,
-        lastUserText: e.tail?.lastUserText ? sanitizeText(e.tail.lastUserText, VOICE_DETAIL_MAX) : undefined,
-        lastAssistantText: e.tail?.lastAssistantText
-          ? sanitizeText(e.tail.lastAssistantText, VOICE_DETAIL_MAX)
-          : undefined,
-        // dedup 用のターン識別子 (最後の assistant メッセージの timestamp)。
-        // 揺れ=同一 timestamp / 別ターン=新 timestamp。送信はせず client 内 dedup のみに使う。
-        lastAssistantAt: e.tail?.lastAssistantAt,
-      }));
+      const inputs: VoiceSessionInput[] = mirrored.map(e => {
+        // 2 人会話の素になる作業コンテキストをイベント列から抽出 (送信前 redaction)。
+        const work = extractWorkContext(source.readEvents(e, SNAPSHOT_MAX_EVENTS));
+        const userPrompt = work.userPrompt
+          ? sanitizeText(work.userPrompt, CONTEXT_USER_PROMPT_MAX)
+          : undefined;
+        const actions = work.actions
+          .slice(-CONTEXT_ACTIONS_MAX)
+          .map(a => sanitizeText(a, CONTEXT_ITEM_MAX));
+        const notes = work.notes
+          .filter(n => n.length >= NOTE_MIN_LEN)
+          .slice(-CONTEXT_NOTES_MAX)
+          .map(n => sanitizeText(n, CONTEXT_ITEM_MAX));
+        return {
+          projectDir: e.projectDir,
+          sessionId: e.transcript?.sessionId,
+          projectName: path.basename(e.cwd) || e.cwd,
+          state: e.state,
+          lastUserText: e.tail?.lastUserText ? sanitizeText(e.tail.lastUserText, VOICE_DETAIL_MAX) : undefined,
+          lastAssistantText: e.tail?.lastAssistantText
+            ? sanitizeText(e.tail.lastAssistantText, VOICE_DETAIL_MAX)
+            : undefined,
+          userPrompt,
+          actions: actions.length > 0 ? actions : undefined,
+          notes: notes.length > 0 ? notes : undefined,
+          // dedup 用のターン識別子 (最後の assistant メッセージの timestamp)。
+          // 揺れ=同一 timestamp / 別ターン=新 timestamp。送信はせず client 内 dedup のみに使う。
+          lastAssistantAt: e.tail?.lastAssistantAt,
+        };
+      });
       for (const ev of detector.observe(inputs, now())) queue.enqueue(ev);
       await queue.flush();
     } finally {

@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-import { PersonaGenerator } from './persona';
+import { DialogueGenerator } from './persona';
 import type { VoiceEventPayload } from './store';
 import type { TtsProvider } from './tts';
 import { VoicePipeline } from './voice-pipeline';
@@ -16,13 +16,30 @@ const event = (over: Partial<VoiceEventPayload> = {}): VoiceEventPayload => ({
   ...over,
 });
 
-const fixedPersona = (line = 'foo、おわったよ'): PersonaGenerator =>
-  new PersonaGenerator({ generate: async () => line });
+/** 1 発話だけ返す台本ジェネレータ（teacher）。 */
+const fixedPersona = (line = 'foo、おわったよ'): DialogueGenerator =>
+  new DialogueGenerator({
+    generate: async () =>
+      JSON.stringify([{ speaker: 'teacher', speech: line, tts_text: line, emotion: 'neutral', se: null }]),
+  });
+
+/** teacher → student の 2 発話を返す台本ジェネレータ。 */
+const twoLinePersona = (): DialogueGenerator =>
+  new DialogueGenerator({
+    generate: async () =>
+      JSON.stringify([
+        { speaker: 'teacher', speech: 'テスト全部とおったよ', tts_text: 'テスト全部とおったよ', emotion: 'joy', se: null },
+        { speaker: 'student', speech: 'へぇー、すごい！', tts_text: 'へぇー、すごい！', emotion: 'surprise', se: null },
+      ]),
+  });
 
 const okTts: TtsProvider = {
   tag: 'fake',
   isEnabled: () => true,
-  synthesize: async (t: string) => ({ bytes: Buffer.from('wav:' + t), mime: 'audio/wav' }),
+  synthesize: async (t: string, opts) => ({
+    bytes: Buffer.from(`wav:${opts?.voice ?? '?'}:${t}`),
+    mime: 'audio/wav',
+  }),
 };
 
 const throwingTts: TtsProvider = {
@@ -49,7 +66,7 @@ test('started は読み上げない（utterance を作らない）', async () =>
     onUtterance: () => notified++,
   });
   const r = await pipe.handle(event({ kind: 'started' }));
-  assert.equal(r, null);
+  assert.deepEqual(r, []);
   assert.equal(store.size(), 0);
   assert.equal(notified, 0);
 });
@@ -64,18 +81,45 @@ test('completed: persona + tts → 音声付き utterance + onUtterance', async 
     now: () => 5000,
     onUtterance: u => got.push(u),
   });
-  const u = await pipe.handle(event());
-  assert.ok(u);
-  assert.equal(u!.text, 'foo、テスト全部とおった');
-  assert.equal(u!.kind, 'completed');
-  assert.equal(u!.clientId, 'wsl2-akira');
-  assert.equal(u!.createdAtMs, 5000);
-  assert.ok(u!.audio);
-  assert.equal(u!.audio!.mime, 'audio/wav');
-  // onUtterance に同じ utterance が渡り、id でストアから引ける
+  const us = await pipe.handle(event());
+  assert.equal(us.length, 1);
+  const u = us[0];
+  assert.equal(u.text, 'foo、テスト全部とおった');
+  assert.equal(u.kind, 'completed');
+  assert.equal(u.clientId, 'wsl2-akira');
+  assert.equal(u.speaker, 'teacher');
+  assert.equal(u.createdAtMs, 5000);
+  assert.ok(u.audio);
+  assert.equal(u.audio!.mime, 'audio/wav');
   assert.equal(got.length, 1);
-  assert.equal(got[0].id, u!.id);
-  assert.equal(store.get(u!.id, 5000)!.text, 'foo、テスト全部とおった');
+  assert.equal(got[0].id, u.id);
+  assert.equal(store.get(u.id, 5000)!.text, 'foo、テスト全部とおった');
+});
+
+test('2 人会話: 発話ごとに utterance を作り、声を speaker で変え、順序を保つ', async () => {
+  const store = new VoiceStore();
+  const got: Utterance[] = [];
+  const pipe = new VoicePipeline({
+    persona: twoLinePersona(),
+    tts: okTts,
+    store,
+    now: () => 1000,
+    onUtterance: u => got.push(u),
+  });
+  const us = await pipe.handle(event());
+  assert.equal(us.length, 2);
+  assert.equal(us[0].speaker, 'teacher');
+  assert.equal(us[1].speaker, 'student');
+  // createdAtMs を 1ms ずつずらして会話順を保証
+  assert.equal(us[0].createdAtMs, 1000);
+  assert.equal(us[1].createdAtMs, 1001);
+  // teacher=Leda / student=Aoede の声で合成されている
+  assert.ok(us[0].audio!.bytes.toString().includes('Leda'));
+  assert.ok(us[1].audio!.bytes.toString().includes('Aoede'));
+  assert.equal(got.length, 2);
+  // 同一 voice-event の発話は同じ groupId で束ねられる
+  assert.equal(us[0].groupId, us[1].groupId);
+  assert.ok(us[0].groupId);
 });
 
 test('TTS 無効: テキストのみの utterance を作る（onUtterance も発火）', async () => {
@@ -87,18 +131,18 @@ test('TTS 無効: テキストのみの utterance を作る（onUtterance も発
     store,
     onUtterance: () => notified++,
   });
-  const u = await pipe.handle(event({ kind: 'awaiting' }));
-  assert.ok(u);
-  assert.equal(u!.audio, undefined);
+  const us = await pipe.handle(event({ kind: 'awaiting' }));
+  assert.equal(us.length, 1);
+  assert.equal(us[0].audio, undefined);
   assert.equal(notified, 1);
 });
 
 test('TTS が throw してもテキストのみで保存し、handle は throw しない', async () => {
   const store = new VoiceStore();
   const pipe = new VoicePipeline({ persona: fixedPersona(), tts: throwingTts, store });
-  const u = await pipe.handle(event({ kind: 'progress' }));
-  assert.ok(u);
-  assert.equal(u!.audio, undefined);
+  const us = await pipe.handle(event({ kind: 'progress' }));
+  assert.equal(us.length, 1);
+  assert.equal(us[0].audio, undefined);
   assert.equal(store.size(), 1);
 });
 
@@ -112,20 +156,20 @@ test('onUtterance が throw しても handle は utterance を返す', async () 
       throw new Error('listener boom');
     },
   });
-  const u = await pipe.handle(event());
-  assert.ok(u);
+  const us = await pipe.handle(event());
+  assert.equal(us.length, 1);
   assert.equal(store.size(), 1);
 });
 
 test('キー未設定 persona（fallback）でも音声化が進む', async () => {
   const store = new VoiceStore();
   const pipe = new VoicePipeline({
-    persona: new PersonaGenerator({ apiKey: undefined }), // fallback テンプレ
+    persona: new DialogueGenerator({ apiKey: undefined }), // fallback テンプレ
     tts: okTts,
     store,
   });
-  const u = await pipe.handle(event({ kind: 'completed', projectName: 'bar' }));
-  assert.ok(u);
-  assert.match(u!.text, /bar/);
-  assert.ok(u!.audio);
+  const us = await pipe.handle(event({ kind: 'completed', projectName: 'bar' }));
+  assert.equal(us.length, 1);
+  assert.match(us[0].text, /bar/);
+  assert.ok(us[0].audio);
 });

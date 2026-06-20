@@ -138,7 +138,10 @@ export function startServer(opts: ServerOptions, source: EntrySource = new Local
     // persona の声/スタイルを TTS に渡し、生成完了を voiceListeners (SSE) へ push する。
     const persona = loadPersona();
     const personaGen = new PersonaGenerator({ persona });
-    const tts = selectTtsProvider(process.env, persona);
+    const tts = selectTtsProvider(process.env, {
+      ttsVoice: persona.teacher.ttsVoice,
+      ttsStyle: persona.teacher.ttsStyle,
+    });
     const voiceStore = new VoiceStore();
     const pipeline = new VoicePipeline({
       persona: personaGen,
@@ -156,7 +159,8 @@ export function startServer(opts: ServerOptions, source: EntrySource = new Local
       },
     });
     console.log(
-      `[ai-monitor] voice: persona=${personaGen.isEnabled() ? 'haiku' : 'fallback'} (${persona.name}), ` +
+      `[ai-monitor] voice: persona=${personaGen.isEnabled() ? 'haiku' : 'fallback'} ` +
+        `(${persona.teacher.name} & ${persona.student.name}), ` +
         `tts=${tts.isEnabled() ? tts.tag : 'none'}`,
     );
 

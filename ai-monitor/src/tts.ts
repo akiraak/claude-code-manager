@@ -15,13 +15,21 @@ export interface TtsResult {
   mime: string;
 }
 
+/** 1 回の合成でキャラ別に声/スタイルを差し替えるためのオプション。 */
+export interface SynthOptions {
+  /** prebuilt voice 名（teacher=Leda / student=Aoede）。未指定はプロバイダ既定。 */
+  voice?: string;
+  /** スタイル（自然言語前置）。未指定はプロバイダ既定。 */
+  style?: string;
+}
+
 export interface TtsProvider {
-  /** キャッシュキーに混ぜる安定なタグ（voice/model を含め、別声で衝突しないように）。 */
+  /** キャッシュキーに混ぜる安定なタグ（model を含め、別モデルで衝突しないように）。 */
   readonly tag: string;
   /** 合成が可能か（キー設定済みか）。 */
   isEnabled(): boolean;
-  /** 合成。無効 / 音声が取れないときは throw か null。 */
-  synthesize(text: string): Promise<TtsResult | null>;
+  /** 合成。無効 / 音声が取れないときは throw か null。voice/style を呼び出しごとに上書き可。 */
+  synthesize(text: string, opts?: SynthOptions): Promise<TtsResult | null>;
 }
 
 const SAMPLE_RATE = 24000; // Gemini TTS の出力固定
@@ -108,14 +116,16 @@ export class GeminiTtsProvider implements TtsProvider {
     return Boolean(this.apiKey);
   }
 
-  async synthesize(text: string): Promise<TtsResult | null> {
+  async synthesize(text: string, opts: SynthOptions = {}): Promise<TtsResult | null> {
     if (!this.apiKey) return null;
-    const prompt = `${this.style}: ${text}`;
+    const voice = opts.voice ?? this.voice;
+    const style = opts.style ?? this.style;
+    const prompt = `${style}: ${text}`;
     const body = {
       contents: [{ parts: [{ text: prompt }] }],
       generationConfig: {
         responseModalities: ['AUDIO'],
-        speechConfig: { voiceConfig: { prebuiltVoiceConfig: { voiceName: this.voice } } },
+        speechConfig: { voiceConfig: { prebuiltVoiceConfig: { voiceName: voice } } },
       },
     };
     const resp = await this.fetchImpl(geminiEndpoint(this.model), {
@@ -141,7 +151,7 @@ export class NullTtsProvider implements TtsProvider {
   isEnabled(): boolean {
     return false;
   }
-  async synthesize(_text: string): Promise<TtsResult | null> {
+  async synthesize(_text: string, _opts?: SynthOptions): Promise<TtsResult | null> {
     return null;
   }
 }
@@ -168,11 +178,15 @@ export class CachingTtsProvider implements TtsProvider {
     return this.inner.isEnabled();
   }
 
-  async synthesize(text: string): Promise<TtsResult | null> {
-    const key = crypto.createHash('sha256').update(`${this.inner.tag}\n${text}`).digest('hex');
+  async synthesize(text: string, opts: SynthOptions = {}): Promise<TtsResult | null> {
+    // voice/style ごとに別キャッシュ（同テキストでも teacher/student で別音声）。
+    const key = crypto
+      .createHash('sha256')
+      .update(`${this.inner.tag}\n${opts.voice ?? ''}\n${opts.style ?? ''}\n${text}`)
+      .digest('hex');
     const hit = this.cache.get(key);
     if (hit) return hit;
-    const result = await this.inner.synthesize(text);
+    const result = await this.inner.synthesize(text, opts);
     if (result) {
       this.cache.set(key, result);
       if (this.cache.size > this.maxEntries) {
@@ -187,18 +201,21 @@ export class CachingTtsProvider implements TtsProvider {
 /**
  * env からプロバイダを選ぶ。`CCM_VOICE_TTS_PROVIDER`（既定 gemini / none|null）。
  * gemini はキー未設定なら {@link NullTtsProvider} に落とす（サーバは落とさない）。
+ *
+ * 声/スタイルは合成ごとに `synthesize(text, { voice, style })` で渡す（teacher=Leda / student=Aoede）。
+ * ここで渡す既定 voice/style は override 無し呼び出しのフォールバック。
  */
 export function selectTtsProvider(
   env: NodeJS.ProcessEnv,
-  persona: { ttsVoice: string; ttsStyle: string },
+  defaults?: { ttsVoice?: string; ttsStyle?: string },
 ): TtsProvider {
   const choice = (env.CCM_VOICE_TTS_PROVIDER ?? 'gemini').trim().toLowerCase();
   if (choice === 'none' || choice === 'null') return new NullTtsProvider();
   const gemini = new GeminiTtsProvider({
     apiKey: env.GEMINI_API_KEY,
     model: env.GEMINI_TTS_MODEL,
-    voice: persona.ttsVoice,
-    style: persona.ttsStyle,
+    voice: defaults?.ttsVoice,
+    style: defaults?.ttsStyle,
   });
   if (!gemini.isEnabled()) return new NullTtsProvider();
   return new CachingTtsProvider(gemini);
