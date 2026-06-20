@@ -1069,6 +1069,7 @@ const DASHBOARD_VOICE_SCRIPT = `
   var SPEAKER_LABEL = { teacher: 'ちょビ', student: 'なるこ' };
   var MAX_AGE_MS = 60000;   // これより古い発話は再生キューから捨てる (溜まった分を一気に喋らない)
   var MAX_HISTORY = 50;
+  var GROUP_GAP_MS = 700;   // 別イベント (groupId 違い) の発話に移るとき挟む無音
 
   var bar = document.querySelector('[data-voice-bar]');
   if (!bar) return;
@@ -1101,6 +1102,8 @@ const DASHBOARD_VOICE_SCRIPT = `
   var playing = false;
   var seenClients = {};
   var history = [];
+  var lastGroupId = null;   // 直近に再生した発話のグループ (別イベント検出用)
+  var gapTimer = null;      // 別イベント間の無音タイマ
   var audio = new Audio();
   audio.preload = 'auto';
 
@@ -1133,6 +1136,13 @@ const DASHBOARD_VOICE_SCRIPT = `
     queue.push(meta);
     pump();
   }
+  function groupKeyOf(meta) {
+    // groupId があればそれ、無ければ id 単体を 1 グループ扱い
+    return meta.groupId || ('@' + meta.id);
+  }
+  function clearGapTimer() {
+    if (gapTimer !== null) { clearTimeout(gapTimer); gapTimer = null; }
+  }
   function pump() {
     if (playing) return;
     var now = Date.now();
@@ -1140,12 +1150,24 @@ const DASHBOARD_VOICE_SCRIPT = `
       var meta = queue.shift();
       if (now - meta.createdAtMs > MAX_AGE_MS) continue;   // 古すぎる
       if (!enabled || !passes(meta)) continue;             // 再生直前にも再チェック
-      play(meta);
+      // 別イベント (groupId 違い) に移るときは少し間を開ける。
+      // lastGroupId が null = キューが一度空になった直後なので待たせない。
+      if (lastGroupId !== null && groupKeyOf(meta) !== lastGroupId) {
+        playing = true;   // 無音中も再生中扱いにして二重 pump を防ぐ
+        gapTimer = setTimeout(function() {
+          gapTimer = null;
+          playing = false;
+          play(meta);
+        }, GROUP_GAP_MS);
+      } else {
+        play(meta);
+      }
       return;
     }
   }
   function play(meta) {
     playing = true;
+    lastGroupId = groupKeyOf(meta);
     setNow((meta.projectName ? meta.projectName + ': ' : '') + (meta.speaker ? (SPEAKER_LABEL[meta.speaker] || meta.speaker) + '「' + (meta.text || '') + '」' : (meta.text || '')));
     applyVolume();
     var finished = false;
@@ -1157,6 +1179,8 @@ const DASHBOARD_VOICE_SCRIPT = `
       playing = false;
       setNow('');
       pump();
+      // キューが空 = 一区切り。無音明けの最初の発話は待たせない。
+      if (!playing) lastGroupId = null;
     }
     audio.onended = done;
     audio.onerror = done;   // 404 / 期限切れは黙って次へ
@@ -1166,6 +1190,7 @@ const DASHBOARD_VOICE_SCRIPT = `
   }
   function playNow(meta) {
     // 現在再生を止めて即再生 (履歴の「再生」= 明示操作なので OFF でも鳴らす)。
+    clearGapTimer();
     try { audio.pause(); } catch (e) { /* ignore */ }
     audio.onended = null;
     audio.onerror = null;
@@ -1217,10 +1242,12 @@ const DASHBOARD_VOICE_SCRIPT = `
       pump();   // ユーザージェスチャ。溜まっていれば再生開始 (autoplay 解除も兼ねる)
     } else {
       queue.length = 0;
+      clearGapTimer();
       try { audio.pause(); } catch (e) { /* ignore */ }
       audio.onended = null;
       audio.onerror = null;
       playing = false;
+      lastGroupId = null;
       setNow('');
     }
   });

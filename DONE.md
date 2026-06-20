@@ -1,5 +1,11 @@
 # DONE
 
+- 2026-06-20: イベントが別の音声の場合は間を少し開ける ([plan](docs/plans/archive/voice-inter-event-gap.md))
+    - ダッシュボードの順次再生 (`views.ts` の `DASHBOARD_VOICE_SCRIPT`) で、連続する発話の `groupId` が変わる (= 別イベントに移る) ときだけ短い無音 `GROUP_GAP_MS`(700ms) を挟むようにした。同一イベント内 (2〜4 発話) は連続再生のまま
+    - `lastGroupId` で直近再生グループを保持し、`pump()` で groupId 違いなら `setTimeout` で待ってから `play()` (無音中も `playing=true` で二重 pump 抑止・`gapTimer` で保持)。`done()` でキューが空になったら `lastGroupId` を null に戻し、無音明けの最初の発話は待たせない (= イベント連続時だけ間が入る)
+    - OFF トグル / 履歴の即時再生 (`playNow`) では `gapTimer` を破棄し、無効化後に遅延再生が走らないようにした
+    - 検証: `npm run build` 緑 / `npm test` 176 件 pass (新規テスト: 別イベント間の無音再生ロジックが描画 HTML に出ること)
+
 - 2026-06-20: コマンド（/clear）などは発話しないようにしても問題ないか調査 ([plan](docs/plans/archive/voice-suppress-local-commands.md))
     - 調査結論: ローカルコマンド（`/clear` `/help` `! ls`）の読み上げは**抑制してよい**。発話を起こすのは「完了後 30 秒の鮮度窓内にコマンドを叩き ai-processing→waiting に倒れて completed が前倒し発火する」1 ケースのみ（窓外のアイドル時コマンドは遷移なし＝既に無音）。コマンドを打つ＝そのセッションの手元に居るので音声不要・検出は projectDir 単位で他端末に影響なし
     - 副次バグも発見: `extractWorkContext` のコマンド除外ガード（`startsWith('<command-name>')`）が、`readTailEvents` の整形（`/clear` へ変換）後では空振りし、発話 context の `userPrompt` にコマンド文字列/シェル出力が混入していた

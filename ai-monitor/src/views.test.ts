@@ -360,6 +360,16 @@ test('renderDashboard: voice:true で voice パネル / スクリプト / 配信
   assert.match(html, /teacher:\s*'ちょビ'/);
 });
 
+test('renderDashboard: 別イベント (groupId 違い) の発話間に無音を挟む再生ロジックが出る', () => {
+  const html = renderDashboard([makeEntry({ state: 'waiting' })], { voice: true });
+  // 無音の長さ定数と groupId 比較の存在
+  assert.match(html, /GROUP_GAP_MS\s*=\s*\d+/);
+  assert.match(html, /groupKeyOf/);
+  assert.match(html, /lastGroupId/);
+  // 別グループのときだけ setTimeout で待つ分岐
+  assert.match(html, /groupKeyOf\(meta\)\s*!==\s*lastGroupId/);
+});
+
 test('renderDashboard: 既定 (voice 指定なし) では voice パネルもスクリプトも出ない (後方互換)', () => {
   const html = renderDashboard([makeEntry({ state: 'waiting' })]);
   assert.doesNotMatch(html, /data-voice-bar/);
