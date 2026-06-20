@@ -43,7 +43,7 @@
 
 ブラウザで `http://localhost:8180` を開くと、左上のタブから **TODO / Plans / Specs / AI Monitor** が選べる。Ctrl-C で両方まとめて終了する。
 
-> AI Monitor の server は FS を読まない「集める専用」。`run-ai-monitor.sh` 単体ではカードは空で、各端末（この PC を含む）で `run-voice-client.sh`（後述「進捗音声 + 公開ミラー」）を別途起動して push すると映る。音声 UI (🔊) もこの AI Monitor タブに載る。
+> AI Monitor の server は FS を読まない「集める専用」。`run-ai-monitor.sh` 単体ではカードは空で、各端末（この PC を含む）で `run-ai-monitor-client.sh`（後述「進捗音声 + 公開ミラー」）を別途起動して push すると映る。音声 UI (🔊) もこの AI Monitor タブに載る。
 
 ## 使い方
 
@@ -130,7 +130,7 @@ ANTHROPIC_API_KEY=sk-ant-...
 | モード | 役割 |
 |---|---|
 | `--mode local` (既定) | ローカル FS を pull して loopback 配信 |
-| `--mode client` | local と同じ可視化 + 公開サーバへ状態を uplink push (`run-voice-client.sh` がこれ) |
+| `--mode client` | local と同じ可視化 + 公開サーバへ状態を uplink push (`run-ai-monitor-client.sh` がこれ) |
 | `--mode server` | 公開アグリゲータ。端末別 Bearer で push を受け、集約・音声生成・ミラー配信 (`run-ai-monitor.sh` がこれ) |
 
 ```
@@ -152,23 +152,23 @@ CCM_SERVER_URL=https://ccm.chobi.me CCM_CLIENT_TOKEN=tok_wsl2_xxxxxxxxxxxxxxxx \
   CCM_MIRROR_PROJECTS=claude-code-manager ai-monitor --mode client
 ```
 
-ローカルで動作検証する場合は、ビルド + 既存停止 + 起動をまとめた **起動スクリプト**を使う。`run-ai-monitor.sh` が vibeboard (8180) + server (8190) を、`run-voice-client.sh` が client (8191) を起動する (併存可)。
+ローカルで動作検証する場合は、ビルド + 既存停止 + 起動をまとめた **起動スクリプト**を使う。`run-ai-monitor.sh` が vibeboard (8180) + server (8190) を、`run-ai-monitor-client.sh` が client (8191) を起動する (併存可)。
 
 ```bash
 # サーバ + 管理画面 (ミラー + 音声)。GEMINI_API_KEY/CCM_INGEST_TOKENS は .env か env で
 ./run-ai-monitor.sh        # → http://127.0.0.1:8180 の AI Monitor タブ (= http://127.0.0.1:8190/view?item=dashboard)
 # 各端末: クライアント (この端末の状態を push)。server を動かす PC でも別途起動する
-CCM_MIRROR_PROJECTS=claude-code-manager ./run-voice-client.sh
+CCM_MIRROR_PROJECTS=claude-code-manager ./run-ai-monitor-client.sh
 ```
 
 > 新しいクライアント端末では、起動前に一度 **`./scripts/setup-client.sh`** を実行する (権限プロンプト検出 hook の配置 + `~/.claude/settings.json` への冪等マージ + `.env` 雛形作成。冪等)。詳細・hook あり/なしの挙動差は [権限プロンプト検出のための hook](#権限プロンプト検出のための-hook) を参照。`local` / `server` モードのみで使う端末には不要。
 
 設定の解決順は対象で分かれる:
 - **node (`cli.ts`) が読む設定** (`CCM_CLIENT_TOKEN(S)` / `CCM_CORS_ORIGIN` / `ANTHROPIC_API_KEY` / `GEMINI_API_KEY` / `GEMINI_TTS_MODEL` / `CCM_VOICE_TTS_PROVIDER` / `CCM_SERVER_URL` / `CCM_CLIENT_LABEL` / `CCM_MIRROR_PROJECTS` / `CCM_DRYRUN`) … **env > リポ直下 `.env` > 既定**（`.env` は `dotenv` が読む。スクリプトは値を上書きせず、env にも `.env` にも無いときだけトークンの開発用デフォルトを注入し警告する＝本番不可）
-- **起動スクリプトが解決するポート/ホスト** (`VIBEBOARD_PORT` / `CCM_SERVER_HOST` / `CCM_SERVER_PORT` / `CCM_CLIENT_DASH_PORT`) … **env > リポ直下 `.env` > 既定**（`run-ai-monitor.sh` / `run-voice-client.sh` が `.env` も読み `--host`/`--port` で渡す。`cli.ts` 自体は読まないので、直接 `node dist/cli.js` 起動時は `--host`/`--port` で指定する）
+- **起動スクリプトが解決するポート/ホスト** (`VIBEBOARD_PORT` / `CCM_SERVER_HOST` / `CCM_SERVER_PORT` / `CCM_CLIENT_DASH_PORT`) … **env > リポ直下 `.env` > 既定**（`run-ai-monitor.sh` / `run-ai-monitor-client.sh` が `.env` も読み `--host`/`--port` で渡す。`cli.ts` 自体は読まないので、直接 `node dist/cli.js` 起動時は `--host`/`--port` で指定する）
 - **`SKIP_BUILD` / `CCM_LOG_DIR`** … **env > 既定 のみ**（実行ごとのフラグ・`.env` 非対応）
 
-各スクリプトは出力を `tee` でログファイルに追記する（`run-ai-monitor.sh` → **`logs/ai-monitor-server.log` / `logs/vibeboard.log`**、`run-voice-client.sh` → **`logs/voice-client.log`**。ターミナル表示と両立。`logs/` は gitignore 済み・`CCM_LOG_DIR` で変更可）。後から `tail -f logs/ai-monitor-server.log` や Claude Code から参照できる。
+各スクリプトは出力を `tee` でログファイルに追記する（`run-ai-monitor.sh` → **`logs/ai-monitor-server.log` / `logs/vibeboard.log`**、`run-ai-monitor-client.sh` → **`logs/ai-monitor-client.log`**。ターミナル表示と両立。`logs/` は gitignore 済み・`CCM_LOG_DIR` で変更可）。後から `tail -f logs/ai-monitor-server.log` や Claude Code から参照できる。
 
 > ⚠️ **プライバシー**: ミラーは transcript 末尾・要約・進捗テキストを Cloudflare / 公開サーバ / AI プロバイダ (Anthropic・Gemini) に通過させる。送信前に `ai-monitor/src/redaction.ts` で秘匿パターン (API キー・トークン・private key 等) をマスク + サイズ上限を掛け、`jsonlPath` は送らず、音声 detail は tool 名/入力を含めず短く切り詰める。ミラー対象は `CCM_MIRROR_PROJECTS` で限定すること。保持はメモリ + TTL (集約 24h / 音声 1h) のみで永続化しない。
 

@@ -1,5 +1,11 @@
 # DONE
 
+- 2026-06-20: `run-voice-client.sh` を `run-ai-monitor-client.sh` にリネーム ([plan](docs/plans/archive/rename-run-ai-monitor-client.md))
+    - スクリプトは `--mode client` を起動するだけで音声は生成・再生しない (音声は server=`run-ai-monitor.sh` の責務)。旧名は廃止済み `run-voice-server.sh` との対だった残骸なので、相方 `run-ai-monitor.sh` と揃う名前へ改名
+    - `git mv` + ログファイル名 `voice-client.log` → `ai-monitor-client.log` (`ai-monitor-server.log` と対に)。運用 docs/スクリプト (run-ai-monitor.sh / CLAUDE.md / README.md / .env.example / scripts/setup-client.sh) の参照を更新。ロジック変更なし
+    - 履歴記録 (DONE.md 既存分 / `docs/plans/archive/*` / `voice-frequency-investigation.md` の計測時点ファイル名) は据え置き
+    - 検証: `bash -n` 緑・exec bit 保持・運用ファイルに旧名/旧ログ名の残存なし
+
 - 2026-06-19: ./run-ai-monitor.sh と run-voice-server.sh を統合する ([plan](docs/plans/archive/run-ai-monitor-merge-voice-server.md))
     - `run-ai-monitor.sh` を「vibeboard(8180) + ai-monitor **server**(8190・集約+音声+ミラー)」起動へ統合。旧 local 単体表示は廃止し、`run-voice-server.sh` は削除。client(`run-voice-client.sh`)は無改修
     - 「集める専用」方針(B)確定: 単体ではカード空、各端末(同一PC含む)で client を別途 push。`vibeboard.config.json` の AI Monitor タブ baseUrl を 8181→8190 に変更(client の .env を触らず一致させる唯一の組合せ)

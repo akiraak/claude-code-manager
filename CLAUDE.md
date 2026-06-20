@@ -50,8 +50,8 @@ upstream への反映は後追いで行う。
 ```
 
 - `vibeboard.config.json` の `customTabs` に AI Monitor のエントリ（`baseUrl: http://127.0.0.1:8190`）を登録済み。vibeboard 起動時に **AI Monitor** タブ（= server の音声つきダッシュボード）として読み込まれる
-- server は FS を読まない「集める専用」。`run-ai-monitor.sh` 単体ではカードは空で、各端末（この PC を含む）で `run-voice-client.sh` を別途起動して push すると映る
-- `run-ai-monitor.sh` は既に起動中の vibeboard / ai-monitor server / 旧 local を `pgrep -f` で検出し停止してから起動し直す。`run-voice-client.sh` の client (`--mode client`) は巻き込まない
+- server は FS を読まない「集める専用」。`run-ai-monitor.sh` 単体ではカードは空で、各端末（この PC を含む）で `run-ai-monitor-client.sh` を別途起動して push すると映る
+- `run-ai-monitor.sh` は既に起動中の vibeboard / ai-monitor server / 旧 local を `pgrep -f` で検出し停止してから起動し直す。`run-ai-monitor-client.sh` の client (`--mode client`) は巻き込まない
 - ポート/ホスト変更は `VIBEBOARD_PORT` / `CCM_SERVER_PORT` / `CCM_SERVER_HOST` 環境変数（または `.env`）で指定可能。server ポートを変えた場合は `vibeboard.config.json` の `baseUrl` も合わせる
 
 #### 動作モード (`--mode`)
@@ -66,8 +66,8 @@ upstream への反映は後追いで行う。
 
 起動スクリプト (ビルド + 同モードの既存停止 + 起動):
 - `./run-ai-monitor.sh` — vibeboard (8180) + ai-monitor **server** (既定 8190。集約 + 音声 + ミラー)。管理画面 `http://127.0.0.1:8180` の AI Monitor タブ = `http://127.0.0.1:8190/view?item=dashboard`
-- `./run-voice-client.sh` — client モード (既定 8191。この端末の状態を server へ push)。`run-ai-monitor.sh` と対で、可視化したい各端末（同一 PC を含む）で別途起動する
-- 各スクリプトの停止対象は自分が管理するもの (`run-ai-monitor.sh` = vibeboard / server / 旧 local、`run-voice-client.sh` = client) のみで互いを巻き込まない。設定の解決順: node (`cli.ts`) が読む設定 (トークン/キー/URL/ラベル/allowlist 等) と、起動スクリプトが解決するポート/ホスト (`VIBEBOARD_PORT`/`CCM_SERVER_HOST`/`CCM_SERVER_PORT`/`CCM_CLIENT_DASH_PORT`) は **env > リポ直下 `.env` > 既定** (ポート/ホストは各起動スクリプトが `.env` を読む。直接 `node` 起動時は `--host`/`--port`)。`SKIP_BUILD`/`CCM_LOG_DIR` のみ **env > 既定**。
+- `./run-ai-monitor-client.sh` — client モード (既定 8191。この端末の状態を server へ push)。`run-ai-monitor.sh` と対で、可視化したい各端末（同一 PC を含む）で別途起動する
+- 各スクリプトの停止対象は自分が管理するもの (`run-ai-monitor.sh` = vibeboard / server / 旧 local、`run-ai-monitor-client.sh` = client) のみで互いを巻き込まない。設定の解決順: node (`cli.ts`) が読む設定 (トークン/キー/URL/ラベル/allowlist 等) と、起動スクリプトが解決するポート/ホスト (`VIBEBOARD_PORT`/`CCM_SERVER_HOST`/`CCM_SERVER_PORT`/`CCM_CLIENT_DASH_PORT`) は **env > リポ直下 `.env` > 既定** (ポート/ホストは各起動スクリプトが `.env` を読む。直接 `node` 起動時は `--host`/`--port`)。`SKIP_BUILD`/`CCM_LOG_DIR` のみ **env > 既定**。
 
 新しい **client** 端末は起動前に一度 `./scripts/setup-client.sh` を実行する (権限プロンプト検出 hook の `~/.claude/hooks/` 配置 + `~/.claude/settings.json` への冪等マージ + `.env` 雛形作成。`python3` は絶対パス解決して settings.json に書く。何度実行しても安全)。`local`/`server` のみで使う端末には不要。hook あり/なしの挙動差は下表のとおりで、hook が足すのは Bash/Edit/Write 権限プロンプトの「入力待ち」検出だけ (完了/途中経過/対話ツールの承認待ち音声は hook 非依存)。
 

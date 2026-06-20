@@ -19,7 +19,7 @@
 #   CCM_CLIENT_DASH_PORT  クライアント側ローカルダッシュボードのポート (既定 8191)
 #   CCM_DRYRUN=1          実送信せずログのみ
 #   SKIP_BUILD=1          ビルドを省略 (.env 不可)
-#   CCM_LOG_DIR           ログ出力先 (既定 <repo>/logs。voice-client.log に tee 追記・.env 不可)
+#   CCM_LOG_DIR           ログ出力先 (既定 <repo>/logs。ai-monitor-client.log に tee 追記・.env 不可)
 set -euo pipefail
 cd "$(dirname "$0")"
 
@@ -31,12 +31,12 @@ DASH_PORT="${CCM_CLIENT_DASH_PORT:-$(dotenv_get CCM_CLIENT_DASH_PORT)}"; DASH_PO
 SERVER_PORT="${CCM_SERVER_PORT:-$(dotenv_get CCM_SERVER_PORT)}"; SERVER_PORT="${SERVER_PORT:-8190}"
 
 # --- ログをファイルにも残す (Claude Code から参照できるように) ---
-# 既定 <repo>/logs/voice-client.log。CCM_LOG_DIR で変更可。
+# 既定 <repo>/logs/ai-monitor-client.log。CCM_LOG_DIR で変更可。
 LOG_DIR="${CCM_LOG_DIR:-$(pwd)/logs}"
 mkdir -p "$LOG_DIR"
-LOG="$LOG_DIR/voice-client.log"
+LOG="$LOG_DIR/ai-monitor-client.log"
 exec > >(tee -a "$LOG") 2>&1
-echo "===== [$(date '+%F %T')] run-voice-client start  dash_port=$DASH_PORT pid=$$ ====="
+echo "===== [$(date '+%F %T')] run-ai-monitor-client start  dash_port=$DASH_PORT pid=$$ ====="
 
 # --- ビルド (SKIP_BUILD=1 で省略) ---
 if [ "${SKIP_BUILD:-0}" != "1" ]; then

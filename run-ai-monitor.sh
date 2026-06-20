@@ -3,9 +3,9 @@
 # vibeboard (管理画面) + ai-monitor server (集約 + 音声 + ミラー) をまとめて起動する。
 #
 # server は FS を読まない「集める専用」の公開アグリゲータ。各端末のセッションを映すには
-# 別途 run-voice-client.sh を起動して push する (この run-ai-monitor.sh を動かす PC でも
+# 別途 run-ai-monitor-client.sh を起動して push する (この run-ai-monitor.sh を動かす PC でも
 # 別途 client を起動する必要がある。単体ではダッシュボードのカードは空)。
-# client (--mode client) は run-voice-client.sh が別管理。このスクリプトは止めない。
+# client (--mode client) は run-ai-monitor-client.sh が別管理。このスクリプトは止めない。
 #
 # 設定の優先順位:
 #   node (cli.ts) が読む設定 … env > リポ直下 .env > 既定。
@@ -48,7 +48,7 @@ fi
 # --- 必須: ingest トークン (server, env > .env > 開発用デフォルト) ---
 # env にも .env にも無いときだけ開発用デフォルトを export する (.env にある場合は dotenv に委ねる)。
 # server が読むのは CCM_INGEST_TOKENS (旧 CCM_CLIENT_TOKENS も cli.ts が後方互換で読む)。
-# client 系の注入 (CCM_SERVER_URL / CCM_CLIENT_TOKEN) は一切しない (client は run-voice-client.sh の責務)。
+# client 系の注入 (CCM_SERVER_URL / CCM_CLIENT_TOKEN) は一切しない (client は run-ai-monitor-client.sh の責務)。
 if [ -z "${CCM_INGEST_TOKENS:-}" ] && [ -z "${CCM_CLIENT_TOKENS:-}" ] \
    && ! grep -qE '^CCM_INGEST_TOKENS=.+' .env 2>/dev/null \
    && ! grep -qE '^CCM_CLIENT_TOKENS=.+' .env 2>/dev/null; then
@@ -105,7 +105,7 @@ stop_existing() {
 # 自分が管理するものだけ停止する。
 # - server: 自分の前回起動 + 旧 run-voice-server.sh が残っていればポート衝突回避で停止。
 # - 旧 local(8181): 移行前の run-ai-monitor.sh が残っていれば解放 (--mode local / 旧 --port 形式)。
-# run-voice-client.sh の client (--mode client) は対象外。
+# run-ai-monitor-client.sh の client (--mode client) は対象外。
 # パターンは cli.js の直後に続く語で判定するため、--mode server/client には一致しない
 # (client は cli.js の直後が " --mode client" なので " --mode local"/" --port" にマッチしない)。
 stop_existing "vibeboard"          "vibeboard/dist/cli.js"
@@ -139,7 +139,7 @@ echo "[start] vibeboard pid=$VIBEBOARD_PID port=$VIBEBOARD_PORT" >&2
 echo "" >&2
 echo "[guide] 管理画面: http://127.0.0.1:$VIBEBOARD_PORT  (AI Monitor タブ = 音声つきダッシュボード)" >&2
 echo "[guide] 直リンク: http://127.0.0.1:$SERVER_PORT/view?item=dashboard" >&2
-echo "[guide] セッションを映すには各端末で ./run-voice-client.sh を別途起動して push してください (この PC でも必要)" >&2
+echo "[guide] セッションを映すには各端末で ./run-ai-monitor-client.sh を別途起動して push してください (この PC でも必要)" >&2
 echo "[guide] 音声: ダッシュボードで 🔊 ON をクリックすると autoplay が解除されます (GEMINI_API_KEY 未設定なら無音)" >&2
 
 wait -n

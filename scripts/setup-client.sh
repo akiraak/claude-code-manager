@@ -7,7 +7,7 @@
 #   3. ~/.claude/settings.json の PermissionRequest / PostToolUse / Stop に hook を冪等マージ
 #      (既存 notify-*.py 等を壊さない・二重登録しない・バックアップを残す)
 #   4. .env が無ければ .env.example から雛形を作り、client モードに必要な値の記入を案内
-#   5. 次の一歩 (./run-voice-client.sh) を表示
+#   5. 次の一歩 (./run-ai-monitor-client.sh) を表示
 #
 # 何度実行しても安全 (idempotent)。settings.json / hook は変更前に .bak を作る。
 # 詳細・hook あり/なし比較は docs/plans/new-client-setup.md を参照。
@@ -177,7 +177,7 @@ cat <<EOF
        CCM_CLIENT_TOKEN … この端末の Bearer (server 側 CCM_INGEST_TOKENS のいずれかと一致)
        CCM_CLIENT_LABEL … この端末の表示名 (未設定なら hostname)
   2) client モードで起動:
-       ./run-voice-client.sh
+       ./run-ai-monitor-client.sh
 
 hook (権限プロンプトの「入力待ち」検出) はこのスクリプトで配置済み。
 hook あり/なしの挙動差は docs/plans/new-client-setup.md を参照。

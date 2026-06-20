@@ -8,3 +8,5 @@
     - [x] server に `CCM_VOICE_SPOKEN_KINDS`（読み上げ kind を env 可変化）を実装
     - [ ] `CCM_VOICE_SPOKEN_KINDS=completed,awaiting` で運用し体感を評価（`.env` 設定済み・server 再起動が必要）
   - [ ] Phase 4: 結論 → 実装プラン化（`docs/plans/voice-frequency-tuning.md`）
+
+- [ ] イベントが別の音声の場合は間を少し開ける
