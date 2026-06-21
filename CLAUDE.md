@@ -23,11 +23,11 @@
 ## 開発管理画面 (vibeboard)
 
 ローカル開発時のタスク・プラン管理は [vibeboard](https://github.com/akiraak/vibeboard) で行う。
-upstream を本リポに fork として取り込み済み（`./vibeboard/`）。改修は本リポで直接コミットする。
-upstream への反映は後追いで行う。
+vibeboard は本リポに vendored せず、`run-ai-monitor.sh` が **upstream から pin したタグ (`VIBEBOARD_REF`・既定 `v0.2.0`) を `git clone`** して `./vibeboard/` に取得する（無ければ clone、あれば再利用。`vibeboard/` は gitignore 済み）。
+AI Monitor が依存する customTabs は upstream vibeboard の汎用機能 (v0.2.0+) なので、vibeboard 側の改修は upstream に直接入れてタグを上げ、`VIBEBOARD_REF` を更新する。clone 元/タグは `VIBEBOARD_REPO`/`VIBEBOARD_REF` で変更可能。
 
 ```bash
-# 起動 (依存インストール + ビルド + 既存停止 + 起動 を全部やる)
+# 起動 (vibeboard を upstream から clone[初回のみ] + 依存インストール + ビルド + 既存停止 + 起動 を全部やる)
 ./run-ai-monitor.sh
 ```
 

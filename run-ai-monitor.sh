@@ -14,7 +14,11 @@
 #     .env にも無いときだけトークンの開発用デフォルトを注入する。
 #   起動スクリプト固有の設定 … env > リポ直下 .env > 既定 (このスクリプトが .env も読む)。
 #     VIBEBOARD_PORT / CCM_SERVER_PORT / CCM_SERVER_HOST。直接 node 起動時は --port/--host。
+#     VIBEBOARD_REPO / VIBEBOARD_REF … vibeboard の clone 元 / pin するタグ (既定 v0.2.0)。
 #   SKIP_BUILD / CCM_LOG_DIR は env > 既定 のみ (.env 非対応)。
+#
+# vibeboard ソースは本リポに vendored せず、初回起動時に upstream から clone する
+# (vibeboard/ が無ければ VIBEBOARD_REF で shallow clone。既にあれば再利用)。
 set -euo pipefail
 
 cd "$(dirname "$0")"
@@ -27,8 +31,58 @@ VIBEBOARD_PORT="${VIBEBOARD_PORT:-$(dotenv_get VIBEBOARD_PORT)}"; VIBEBOARD_PORT
 SERVER_PORT="${CCM_SERVER_PORT:-$(dotenv_get CCM_SERVER_PORT)}"; SERVER_PORT="${SERVER_PORT:-8190}"
 SERVER_HOST="${CCM_SERVER_HOST:-$(dotenv_get CCM_SERVER_HOST)}"; SERVER_HOST="${SERVER_HOST:-127.0.0.1}"
 
+# vibeboard ソースは vendored をやめ upstream から pin したタグを clone して取得する。
+# REPO/REF も env > .env > 既定 で解決する (REF はタグ/SHA。再現性のため固定推奨)。
+# 既定は HTTPS (公開リポなので鍵不要・fresh checkout / CI でもそのまま clone できる)。
+# SSH で取りたい場合は VIBEBOARD_REPO=git@github.com:akiraak/vibeboard.git を env/.env で指定。
+VIBEBOARD_REPO="${VIBEBOARD_REPO:-$(dotenv_get VIBEBOARD_REPO)}"; VIBEBOARD_REPO="${VIBEBOARD_REPO:-https://github.com/akiraak/vibeboard.git}"
+VIBEBOARD_REF="${VIBEBOARD_REF:-$(dotenv_get VIBEBOARD_REF)}"; VIBEBOARD_REF="${VIBEBOARD_REF:-v0.2.0}"
+
 LOG_DIR="${CCM_LOG_DIR:-$(pwd)/logs}"
 mkdir -p "$LOG_DIR"
+
+# --- vibeboard ソース取得 (vendored 廃止: upstream の pin したタグを clone) ---
+# vibeboard/ が無ければ upstream を VIBEBOARD_REF で shallow clone する。既にあれば再利用
+# (再取得したいときは vibeboard/ を消すか、別 REF で手動 clone する)。clone 後の
+# node_modules/dist は build_pkg が生成する。
+ensure_vibeboard() {
+  if [ -f vibeboard/package.json ]; then
+    return 0  # 既存チェックアウトを再利用
+  fi
+  # vibeboard/ が在るのに package.json が無い = 壊れた/想定外の状態。
+  # 自動削除するとユーザの中身を消しかねないので、消さずにエラーで止める。
+  if [ -e vibeboard ]; then
+    echo "[error] 'vibeboard' が存在しますが有効なチェックアウトではありません (package.json なし)。" >&2
+    echo "[error]   中身を確認し、不要なら手動で削除してから再実行してください: rm -rf vibeboard" >&2
+    exit 1
+  fi
+  # 取得前に ref が remote に在るか確認する。既定 v0.2.0 は upstream リリース後に存在する
+  # ため、未リリース時は「タグ未公開」と分かる明確なエラーにする (cryptic な clone 失敗を防ぐ)。
+  if ! git ls-remote --exit-code "$VIBEBOARD_REPO" \
+         "refs/tags/$VIBEBOARD_REF" "refs/heads/$VIBEBOARD_REF" >/dev/null 2>&1; then
+    echo "[error] $VIBEBOARD_REPO に ref '$VIBEBOARD_REF' が見つかりません (未公開タグ/ブランチ、またはネットワーク不通)。" >&2
+    echo "[error]   - upstream をリリースしてタグを push してください (vibeboard リポで): git push origin main && git push origin $VIBEBOARD_REF" >&2
+    echo "[error]   - 既に公開済みのタグ/ブランチを使うなら VIBEBOARD_REF=<ref> を env/.env で指定" >&2
+    echo "[error]   - オフラインなら接続を確認して再実行" >&2
+    exit 1
+  fi
+  # ここでは vibeboard/ は存在しない。一時ディレクトリへ clone し、成功時のみ配置する。
+  # こうすることで clone 失敗時の後始末は「自分が作った一時 dir」だけに限定され、
+  # 既存の vibeboard/ を絶対に消さない。
+  local tmp="vibeboard.tmp.$$"
+  rm -rf "$tmp"
+  echo "[fetch] vibeboard が無いので upstream を clone します: $VIBEBOARD_REPO @ $VIBEBOARD_REF" >&2
+  if ! git clone --depth 1 --branch "$VIBEBOARD_REF" "$VIBEBOARD_REPO" "$tmp"; then
+    rm -rf "$tmp"  # 自分が作った一時 dir だけ消す (既存 vibeboard/ は触らない)
+    echo "[error] vibeboard の clone に失敗しました ($VIBEBOARD_REPO @ $VIBEBOARD_REF)" >&2
+    echo "[error]   - ネットワーク接続を確認するか、手動で次を実行: git clone --branch $VIBEBOARD_REF $VIBEBOARD_REPO vibeboard" >&2
+    echo "[error]   - upstream にタグ $VIBEBOARD_REF がまだ無い場合は、リリース後に再実行してください" >&2
+    echo "[error]   - SSH で取りたい場合は VIBEBOARD_REPO=git@github.com:akiraak/vibeboard.git を指定" >&2
+    exit 1
+  fi
+  mv "$tmp" vibeboard
+}
+ensure_vibeboard
 
 # --- ビルド (SKIP_BUILD=1 で省略) ---
 build_pkg() {

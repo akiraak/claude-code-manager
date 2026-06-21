@@ -1,5 +1,5 @@
-vibeboard/node_modules/
-vibeboard/dist/
+# vibeboard は vendored せず run-ai-monitor.sh が upstream から clone する (ディレクトリごと無視)
+vibeboard/
 ai-monitor/node_modules/
 ai-monitor/dist/
 node_modules/
