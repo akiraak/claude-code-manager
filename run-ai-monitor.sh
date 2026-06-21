@@ -49,12 +49,22 @@ ensure_vibeboard() {
   if [ -f vibeboard/package.json ]; then
     return 0  # 既存チェックアウトを再利用
   fi
-  # vibeboard/ が在るのに package.json が無い = 壊れた/想定外の状態。
-  # 自動削除するとユーザの中身を消しかねないので、消さずにエラーで止める。
+  # vibeboard/ が在るのに package.json が無いケースの扱い:
+  # - 中身が build 生成物 (node_modules/dist) だけ = vendored→clone 移行で git が追跡ファイル
+  #   だけ消した「取り残し」。既存チェックアウトが pull 後に起動できなくなるのを防ぐため、
+  #   安全に削除して clone し直す (これらは build_pkg が再生成できる生成物)。
+  # - それ以外 (ユーザのファイル等) が在れば、消さずにエラーで止める (データ消失防止)。
   if [ -e vibeboard ]; then
-    echo "[error] 'vibeboard' が存在しますが有効なチェックアウトではありません (package.json なし)。" >&2
-    echo "[error]   中身を確認し、不要なら手動で削除してから再実行してください: rm -rf vibeboard" >&2
-    exit 1
+    local leftover="(not a directory)"
+    [ -d vibeboard ] && leftover="$(ls -A vibeboard 2>/dev/null | grep -vxE 'node_modules|dist' || true)"
+    if [ -z "$leftover" ]; then
+      echo "[fetch] 旧 vendored の取り残し (node_modules/dist のみ) を検出 → 削除して clone し直します" >&2
+      rm -rf vibeboard
+    else
+      echo "[error] 'vibeboard' が存在しますが有効なチェックアウトではありません (package.json なし)。" >&2
+      echo "[error]   build 生成物以外の中身があります。確認のうえ不要なら手動で削除して再実行: rm -rf vibeboard" >&2
+      exit 1
+    fi
   fi
   # 取得前に ref が remote に在るか確認する。既定 v0.2.0 は upstream リリース後に存在する
   # ため、未リリース時は「タグ未公開」と分かる明確なエラーにする (cryptic な clone 失敗を防ぐ)。
