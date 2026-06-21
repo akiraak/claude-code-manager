@@ -1,5 +1,10 @@
 # DONE
 
+- 2026-06-21: vibeboard を vendored から upstream clone 取得へ変更 ([plan](docs/plans/archive/vibeboard-customtabs-upstream-and-clone.md))
+    - customTabs を upstream vibeboard の汎用機能として実装し **v0.2.0 を公開** (origin/main `fc8c675` + tag `v0.2.0`)。`item-changed` に `reload` フラグを足して `dashboard`/`proc:` ハードコードを除去＝脱 CCM 化し、契約を upstream README に明文化 (並び順=他タブの左・先頭 item 自動選択は固定仕様)
+    - CCM: vendored vibeboard 27 ファイルを追跡削除し、`run-ai-monitor.sh` の `ensure_vibeboard` が upstream の pin タグ (`VIBEBOARD_REF` 既定 `v0.2.0`) を clone (HTTPS 既定・ref の pre-flight チェック・一時 dir clone で既存消失防止・移行取り残しの self-heal)。ai-monitor は `reload:false` を送出。CLAUDE.md / .gitignore 更新
+    - 実リモート (HTTPS) からの clone+build+起動を検証。開発 clone は `~/vibeboard`、実行用 `claude-code-manager/vibeboard/` は使い捨て (gitignore・node_modules 同様)
+
 - 2026-06-20: README.md の更新 ([plan](docs/plans/archive/readme-update-voice-2person.md))
     - 「進捗音声 + 公開ミラー」節が単一ペルソナ「ちょビ口調短文」のままだったのを、現行の **ちょビ(先生) & なるこ(生徒) 2 人会話台本** に更新。話者別ボイス (teacher=Leda / student=Aoede)・`voice-persona.json` (2 キャラ)・1 イベント→2〜4 発話の掛け合い・`SPEECH_SAFETY_MAX` を明記
     - ボイス UI 記述を刷新 (音量の数値 % 表示 + 知覚カーブ・話者/emotion ラベル・`groupId` で束ね別イベント間のみ `GROUP_GAP_MS=700ms` 無音)。server env に `CCM_VOICE_SPOKEN_KINDS` を追加 (設定解決順の一覧にも追記)
