@@ -135,13 +135,14 @@ ANTHROPIC_API_KEY=sk-ant-...
 
 ```
 端末(WSL2/Mac) --mode client  ──Bearer push──▶  公開サーバ --mode server  ──▶  ブラウザ
-  既存検出で状態算出 + 送信            集約 + ちょビ口調短文 + Gemini TTS         ミラー表示 + 順次再生
+  既存検出で状態算出 + 送信        集約 + ちょビ&なるこ 2人会話台本(Haiku) + Gemini TTS     ミラー表示 + 順次再生
 ```
 
-- **発話タイミング**: 完了 (Stop) / 承認待ち (Permission・Ask) / 長時間実行の途中経過。指示受信では発話しない。
-- **ボイス UI** (server モードのダッシュボードのみ): 🔊 ON/OFF (autoplay 解除兼)・音量・種別/端末フィルタ・履歴 + 再再生・SSE で受けて順次再生 (同時再生しない・古い発話はスキップ)。設定は localStorage 永続。
+- **2 人会話 (ちょビ先生 & なるこ生徒)**: 1 つの状態遷移イベントを Claude (Haiku) で **2〜4 発話の掛け合い** (teacher/student 交互・emotion 付き) に変換し、話者ごとに声を変えて読み上げる (teacher=Leda / student=Aoede)。人格・声・スタイル・感情は [`ai-monitor/voice-persona.json`](ai-monitor/voice-persona.json) (編集可・`teacher` / `student` の 2 キャラ) で定義する。client は遷移イベントに作業コンテキスト (ユーザー指示 / 直近アクション列 / Claude のメモ / 経過分) を載せて送り、server がそれを掛け合いに展開する。発話長はプロンプト側 (1〜2 文・40 字目安) で抑え、読み上げは全文を読む (ハード切り詰めは安全網 `SPEECH_SAFETY_MAX = 200` のみ)。API キー未設定 / 失敗時は 1 発話の fallback 台本に退避する。
+- **発話タイミング**: 完了 (Stop) / 承認待ち (Permission・Ask) / 長時間実行の途中経過。指示受信では発話しない。読み上げ種別は server の `CCM_VOICE_SPOKEN_KINDS` で絞れる (後述)。
+- **ボイス UI** (server モードのダッシュボードのみ): 🔊 ON/OFF (autoplay 解除兼)・音量 (現在値を数値 % 表示。スライダー位置は知覚音量で、内部では知覚カーブを通して振幅へ変換するので表示 % と聞こえ方が一致する)・種別/端末フィルタ・履歴 (話者ラベル「ちょビ/なるこ」+ emotion ラベル付き) + 再再生・SSE で受けて順次再生。同一イベントの発話は `groupId` で束ねて連続再生し、別イベントへ移るときだけ短い無音 (`GROUP_GAP_MS = 700ms`) を挟む。同時再生はしない。設定は localStorage 永続。
 - **主な環境変数**
-  - server: `CCM_INGEST_TOKENS` (必須・端末別 Bearer。16 文字以上・カンマ区切り。各端末の `CCM_CLIENT_TOKEN` を全部列挙。未設定/短すぎは起動失敗。旧名 `CCM_CLIENT_TOKENS` も後方互換で可・非推奨) / `CCM_CORS_ORIGIN` / `ANTHROPIC_API_KEY` (ペルソナ短文。未設定は fallback テンプレ) / `GEMINI_API_KEY` (+`GEMINI_TTS_MODEL`) / `CCM_VOICE_TTS_PROVIDER` (`gemini`|`none`)
+  - server: `CCM_INGEST_TOKENS` (必須・端末別 Bearer。16 文字以上・カンマ区切り。各端末の `CCM_CLIENT_TOKEN` を全部列挙。未設定/短すぎは起動失敗。旧名 `CCM_CLIENT_TOKENS` も後方互換で可・非推奨) / `CCM_CORS_ORIGIN` / `ANTHROPIC_API_KEY` (会話台本の生成。未設定は fallback テンプレ) / `GEMINI_API_KEY` (+`GEMINI_TTS_MODEL`) / `CCM_VOICE_TTS_PROVIDER` (`gemini`|`none`) / `CCM_VOICE_SPOKEN_KINDS` (読み上げ種別の csv。既定 `completed,awaiting,progress`。許可は awaiting/completed/progress のみで started は常に無音。例: progress を外して頻度を下げる。未設定/空/不正は既定にフォールバック)
   - client: `CCM_SERVER_URL` / `CCM_CLIENT_TOKEN` / `CCM_CLIENT_LABEL` / `CCM_MIRROR_PROJECTS` (ミラー対象 allowlist) / `CCM_DRYRUN`
 
 ```bash
@@ -164,13 +165,13 @@ CCM_MIRROR_PROJECTS=claude-code-manager ./run-ai-monitor-client.sh
 > 新しいクライアント端末では、起動前に一度 **`./scripts/setup-client.sh`** を実行する (権限プロンプト検出 hook の配置 + `~/.claude/settings.json` への冪等マージ + `.env` 雛形作成。冪等)。詳細・hook あり/なしの挙動差は [権限プロンプト検出のための hook](#権限プロンプト検出のための-hook) を参照。`local` / `server` モードのみで使う端末には不要。
 
 設定の解決順は対象で分かれる:
-- **node (`cli.ts`) が読む設定** (`CCM_CLIENT_TOKEN(S)` / `CCM_CORS_ORIGIN` / `ANTHROPIC_API_KEY` / `GEMINI_API_KEY` / `GEMINI_TTS_MODEL` / `CCM_VOICE_TTS_PROVIDER` / `CCM_SERVER_URL` / `CCM_CLIENT_LABEL` / `CCM_MIRROR_PROJECTS` / `CCM_DRYRUN`) … **env > リポ直下 `.env` > 既定**（`.env` は `dotenv` が読む。スクリプトは値を上書きせず、env にも `.env` にも無いときだけトークンの開発用デフォルトを注入し警告する＝本番不可）
+- **node (`cli.ts`) が読む設定** (`CCM_INGEST_TOKENS` (旧 `CCM_CLIENT_TOKENS`) / `CCM_CLIENT_TOKEN` / `CCM_CORS_ORIGIN` / `ANTHROPIC_API_KEY` / `GEMINI_API_KEY` / `GEMINI_TTS_MODEL` / `CCM_VOICE_TTS_PROVIDER` / `CCM_VOICE_SPOKEN_KINDS` / `CCM_SERVER_URL` / `CCM_CLIENT_LABEL` / `CCM_MIRROR_PROJECTS` / `CCM_DRYRUN`) … **env > リポ直下 `.env` > 既定**（`.env` は `dotenv` が読む。スクリプトは値を上書きせず、env にも `.env` にも無いときだけトークンの開発用デフォルトを注入し警告する＝本番不可）
 - **起動スクリプトが解決するポート/ホスト** (`VIBEBOARD_PORT` / `CCM_SERVER_HOST` / `CCM_SERVER_PORT` / `CCM_CLIENT_DASH_PORT`) … **env > リポ直下 `.env` > 既定**（`run-ai-monitor.sh` / `run-ai-monitor-client.sh` が `.env` も読み `--host`/`--port` で渡す。`cli.ts` 自体は読まないので、直接 `node dist/cli.js` 起動時は `--host`/`--port` で指定する）
 - **`SKIP_BUILD` / `CCM_LOG_DIR`** … **env > 既定 のみ**（実行ごとのフラグ・`.env` 非対応）
 
 各スクリプトは出力を `tee` でログファイルに追記する（`run-ai-monitor.sh` → **`logs/ai-monitor-server.log` / `logs/vibeboard.log`**、`run-ai-monitor-client.sh` → **`logs/ai-monitor-client.log`**。ターミナル表示と両立。`logs/` は gitignore 済み・`CCM_LOG_DIR` で変更可）。後から `tail -f logs/ai-monitor-server.log` や Claude Code から参照できる。
 
-> ⚠️ **プライバシー**: ミラーは transcript 末尾・要約・進捗テキストを Cloudflare / 公開サーバ / AI プロバイダ (Anthropic・Gemini) に通過させる。送信前に `ai-monitor/src/redaction.ts` で秘匿パターン (API キー・トークン・private key 等) をマスク + サイズ上限を掛け、`jsonlPath` は送らず、音声 detail は tool 名/入力を含めず短く切り詰める。ミラー対象は `CCM_MIRROR_PROJECTS` で限定すること。保持はメモリ + TTL (集約 24h / 音声 1h) のみで永続化しない。
+> ⚠️ **プライバシー**: ミラーは transcript 末尾・要約・進捗テキストを Cloudflare / 公開サーバ / AI プロバイダ (Anthropic・Gemini) に通過させる。送信前に `ai-monitor/src/redaction.ts` で秘匿パターン (API キー・トークン・private key 等) をマスク + サイズ上限を掛け、`jsonlPath` は送らない。2 人会話の素になる `context` は **作業の要約だけ** (ユーザー指示 先頭 200 字 / 直近アクション列 各 160 字・最大 10 件〔コマンドは先頭 80 字・ファイルは basename・検索パターンは先頭 50 字に縮めてから〕/ Claude メモ 各 160 字・最大 3 件) を載せ、tool 入力の生データは送らない。server 側 (`ai-monitor/src/ingest.ts`) でも型・配列長・各要素長を再検証する。ミラー対象は `CCM_MIRROR_PROJECTS` で限定すること。保持はメモリ + TTL (集約 24h / 音声 1h) のみで永続化しない。
 
 公開デプロイ (g3plus + Cloudflare Tunnel `ccm.chobi.me` + Cloudflare Access) の成果物と手順は **[`ai-monitor/deploy/g3plus/`](ai-monitor/deploy/g3plus/)** (Dockerfile / docker-compose.yml / .env.example / README) を参照。サーバ・Cloudflare の操作はユーザーが実施する。
 

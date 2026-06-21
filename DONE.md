@@ -1,5 +1,10 @@
 # DONE
 
+- 2026-06-20: README.md の更新 ([plan](docs/plans/archive/readme-update-voice-2person.md))
+    - 「進捗音声 + 公開ミラー」節が単一ペルソナ「ちょビ口調短文」のままだったのを、現行の **ちょビ(先生) & なるこ(生徒) 2 人会話台本** に更新。話者別ボイス (teacher=Leda / student=Aoede)・`voice-persona.json` (2 キャラ)・1 イベント→2〜4 発話の掛け合い・`SPEECH_SAFETY_MAX` を明記
+    - ボイス UI 記述を刷新 (音量の数値 % 表示 + 知覚カーブ・話者/emotion ラベル・`groupId` で束ね別イベント間のみ `GROUP_GAP_MS=700ms` 無音)。server env に `CCM_VOICE_SPOKEN_KINDS` を追加 (設定解決順の一覧にも追記)
+    - プライバシー節の音声 `context` 記述をコードと突き合わせて精緻化 (ユーザー指示 200 字 / アクション各 160 字・最大 10 件 / メモ各 160 字・最大 3 件。コマンド 80 字・検索 50 字・ファイルは basename)。AI 要約・状態バッジ・トークン検証など現状一致の節は変更なし
+
 - 2026-06-20: WebUIのボリュームと実際の音量が違って聞こえる ([plan](docs/plans/archive/voice-volume-perceptual-curve.md))
     - 原因はスライダー値を `audio.volume = volume / 100` と**線形**でゲインに渡していたこと。`HTMLAudioElement.volume` は振幅 (リニアゲイン) だが人の音量知覚は対数的なので、中間域が体感上かなり大きく聞こえ表示%とズレていた
     - `views.ts` の `DASHBOARD_VOICE_SCRIPT` に知覚カーブ `perceptualGain(pct)` を追加し `applyVolume()` を経由させた。exp カーブ `(exp(x)-1)/(e-1)` (x=pct/100): x=1→1.0 / x=0→0 / x=0.5→約0.38 (≈ -8dB ≒ 体感ほぼ半分)。表示数値・`ccm-voice-volume` 保存値はスライダー % のまま (互換維持)。サーバ側 (tts.ts/voice-pipeline.ts) に音量処理は無く変更なし
