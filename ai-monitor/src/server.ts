@@ -411,9 +411,12 @@ export function startServer(opts: ServerOptions, source: EntrySource = new Local
           const key = `${mt}|${e.state}`;
           const prev = lastItemKey.get(id);
           if (prev !== undefined && prev !== key) {
-            res.write(`event: item-changed\ndata: ${JSON.stringify({ id })}\n\n`);
+            // reload:false = vibeboard 親は iframe を再ロードするな (dashboard / proc:* の
+            // iframe は inline script が /api/watch を直接購読し DOM 差分で自己更新するため。
+            // vibeboard 0.2.0+ の customTabs 契約。省略すると親が毎回 iframe を再ロードする)
+            res.write(`event: item-changed\ndata: ${JSON.stringify({ id, reload: false })}\n\n`);
             // dashboard も「直近イベント」「状態バッジ」が変わるので一緒に通知
-            res.write(`event: item-changed\ndata: ${JSON.stringify({ id: 'dashboard' })}\n\n`);
+            res.write(`event: item-changed\ndata: ${JSON.stringify({ id: 'dashboard', reload: false })}\n\n`);
           }
           lastItemKey.set(id, key);
         }
@@ -427,11 +430,11 @@ export function startServer(opts: ServerOptions, source: EntrySource = new Local
       }
     };
 
-    // 要約完了をトリガに dashboard を再取得させる
+    // 要約完了をトリガに dashboard を再取得させる (iframe 内で自己更新するので reload:false)
     const onSummaryUpdate = (): void => {
       if (!alive) return;
       try {
-        res.write(`event: item-changed\ndata: ${JSON.stringify({ id: 'dashboard' })}\n\n`);
+        res.write(`event: item-changed\ndata: ${JSON.stringify({ id: 'dashboard', reload: false })}\n\n`);
       } catch { /* ignore */ }
     };
     summaryListeners.add(onSummaryUpdate);
