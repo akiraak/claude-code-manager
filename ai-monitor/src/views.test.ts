@@ -344,11 +344,17 @@ test('renderDashboard: voice:true で voice パネル / スクリプト / 配信
   assert.match(html, /data-voice-kind="completed"/);
   assert.match(html, /data-voice-kind="awaiting"/);
   assert.match(html, /data-voice-kind="progress"/);
-  // 再生スクリプトと配信エンドポイント参照
-  assert.match(html, /EventSource\('\/api\/watch'\)/);
+  // 再生スクリプトと配信エンドポイント参照 ([Phase 3] voice 購読は ?sub seed つき watchUrl)
+  assert.match(html, /new EventSource\(watchUrl\(\)\)/);
   assert.match(html, /voice-utterance/);
   assert.match(html, /\/api\/voice\/audio\//);
   assert.match(html, /\/api\/voice\/recent\.json/);
+  // [Phase 3] UI ゲーティング: sub 採番 (sessionStorage) + ?sub seed + prefs POST + (再)接続時の再送。
+  assert.match(html, /sessionStorage\.getItem\('ccm-voice-sub'\)/);
+  assert.match(html, /\/api\/watch\?sub=/);
+  assert.match(html, /\/api\/voice\/prefs/);
+  assert.match(html, /function postPrefs\(/);
+  assert.match(html, /addEventListener\('open'/);
   // 音量は知覚カーブ経由 (線形 volume/100 直結ではない。表示%と聞こえ方を一致させる)
   assert.match(html, /perceptualGain/);
   assert.match(html, /audio\.volume = perceptualGain\(/);

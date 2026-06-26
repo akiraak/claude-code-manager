@@ -1063,6 +1063,15 @@ function renderVoiceBar(): string {
 // - 設定 (ON/OFF・音量・種別・端末) は localStorage に永続。
 // - 履歴は起動時に /api/voice/recent.json で初期化し、以降 SSE で先頭に積む。
 //   履歴の「再生」ボタンは明示操作なので OFF でも鳴らし、現在再生を止めて即再生する。
+//
+// [UI ゲーティング / Phase 3] この EventSource は `?sub=<viewer id>&voice=<0|1>&kinds=<csv>` を
+//   宣言して張り、ON/OFF・種別を変えるたびに `POST /api/voice/prefs` で現在値を送る。server は
+//   `?sub` を宣言した接続だけを「voice viewer」として数え、その希望種別の和集合 (∩ env 天井) だけを
+//   生成する (誰も該当種別を ON にしていない / viewer ゼロ → 生成しない = コスト削減)。
+//   ※ savings は「?sub 宣言」が前提。`?sub` を送らない旧キャッシュのタブは viewer に数えられず、
+//     その種別は (他に ON の viewer が居なければ) 生成されない。タブを 1 度リロードすれば新 JS になる。
+//   ※ server 側が CCM_VOICE_UI_GATING=off のときは prefs が 404 になるが best-effort なので無視してよい
+//     (その場合 server は従来どおり env の静的種別で生成する)。
 const DASHBOARD_VOICE_SCRIPT = `
 (function() {
   var KINDS = ['completed', 'awaiting', 'progress'];
@@ -1103,6 +1112,22 @@ const DASHBOARD_VOICE_SCRIPT = `
     return KINDS.slice();
   })();
   var clientFilter = lsGet('ccm-voice-client', '');
+
+  // viewer 識別子 (sub)。タブ単位で採番し sessionStorage に保持する (タブ内の SSE 再接続で不変・
+  // 別タブは別 sub)。これを宣言した接続だけを server が「voice viewer」として数える (UI ゲーティング)。
+  var sub = (function() {
+    try {
+      var s = sessionStorage.getItem('ccm-voice-sub');
+      if (s) return s;
+      var gen = (window.crypto && crypto.randomUUID) ? crypto.randomUUID()
+        : (Date.now().toString(36) + Math.random().toString(36).slice(2, 10));
+      sessionStorage.setItem('ccm-voice-sub', gen);
+      return gen;
+    } catch (e) {
+      // sessionStorage 不可 (プライベートモード等) はメモリ内採番でフォールバック (この window 内で不変)。
+      return 'mem-' + Date.now().toString(36) + Math.random().toString(36).slice(2, 10);
+    }
+  })();
 
   // --- 状態 ---
   var queue = [];
@@ -1270,6 +1295,7 @@ const DASHBOARD_VOICE_SCRIPT = `
     enabled = !enabled;
     lsSet('ccm-voice-enabled', enabled ? '1' : '0');
     applyToggleUI();
+    postPrefs();   // 🔊 ON/OFF を生成抑止へ反映 (OFF の viewer は union に寄与しない)
     if (enabled) {
       pump();   // ユーザージェスチャ。溜まっていれば再生開始 (autoplay 解除も兼ねる)
     } else {
@@ -1298,6 +1324,7 @@ const DASHBOARD_VOICE_SCRIPT = `
       }
       kinds = next;
       lsSet('ccm-voice-kinds', JSON.stringify(kinds));
+      postPrefs();   // 種別チェックの変更を生成抑止へ反映 (union ∩ env 天井)
     });
   }
   clientSel.addEventListener('change', function() {
@@ -1338,8 +1365,32 @@ const DASHBOARD_VOICE_SCRIPT = `
     })
     .catch(function() { /* 履歴は無くても良い */ });
 
+  // --- viewer prefs を server へ送る (UI ゲーティング) ---
+  // 生成抑止は「接続中 viewer の希望種別の和集合 (∩ env 天井)」で決まるので、ON/OFF・種別を変えるたびに
+  // 権威ある現在値を POST する。端末フィルタ clientFilter は再生のみに効く (生成抑止の対象外) ので送らない。
+  // uiGating=off の server では 404 になるが best-effort なので無視してよい (従来の静的種別生成にフォールバック)。
+  function postPrefs() {
+    try {
+      fetch('/api/voice/prefs', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        cache: 'no-store',
+        body: JSON.stringify({ sub: sub, enabled: enabled, kinds: kinds })
+      }).catch(function() { /* best-effort */ });
+    } catch (e) { /* ignore */ }
+  }
+  function watchUrl() {
+    // 初期 seed (POST 到着前の取りこぼし防止)。再接続時はこの URL の seed が古い可能性があるが、
+    // onopen で必ず postPrefs して現在値へ上書きするので問題ない。
+    return '/api/watch?sub=' + encodeURIComponent(sub)
+      + '&voice=' + (enabled ? '1' : '0')
+      + '&kinds=' + encodeURIComponent(kinds.join(','));
+  }
+
   // --- SSE (voice 専用の独立 EventSource。再接続はネイティブ任せ) ---
-  var es = new EventSource('/api/watch');
+  var es = new EventSource(watchUrl());
+  // (再)接続のたびに権威ある prefs を送り直す。初回ロード = 初期値の宣言、再接続 = 古い seed の上書き訂正。
+  es.addEventListener('open', function() { postPrefs(); });
   es.addEventListener('voice-utterance', function(ev) {
     var meta = null;
     try { meta = JSON.parse(ev.data); } catch (e) { return; }

@@ -6,11 +6,12 @@ import { LocalEntrySource, type EntrySource } from './entry-source';
 import { Cooldown, createIngestRouter, RateLimiter } from './ingest';
 import { characterFor, loadPersona, PersonaGenerator } from './persona';
 import { decodeId, type ActivityState, type MonitorEntry } from './state';
-import { AggregateStore } from './store';
+import { AggregateStore, type VoiceEventKind } from './store';
 import { Summarizer } from './summarize';
 import { projectsDir } from './transcript';
 import { selectTtsProvider } from './tts';
 import { parseSpokenKinds, VoicePipeline } from './voice-pipeline';
+import { MAX_SUB_LEN, parseVoicePrefsBody, VoiceSubscriberRegistry } from './voice-subscribers';
 import { isValidUtteranceId, toUtteranceMeta, VoiceStore, type Utterance } from './voice-store';
 import { buildProcessViewData, entryToDashboardCardData, renderDashboard, renderNotFound, renderProcessView } from './views';
 
@@ -99,6 +100,35 @@ export function startServer(opts: ServerOptions, source: EntrySource = new Local
   // server モードのみ pipeline.onUtterance が発火させる (local/client では空のまま)。
   const voiceListeners = new Set<(u: Utterance) => void>();
 
+  // UI ゲーティング (種別チェックでサーバ側の生成を抑止する) のコア。
+  // 接続中 viewer の希望種別で「生成そのもの」を動的に絞る。
+  // envAllow (=CCM_VOICE_SPOKEN_KINDS) は運用者のコスト**上限 (天井)**で、UI はその内側でしか動かせない
+  // (effective = envAllow ∩ ∪{接続中 🔊ON viewer の kinds})。viewer ゼロ / 全員 OFF → 空集合 = 無音 (コスト削減の本体)。
+  //
+  // CCM_VOICE_UI_GATING=on (既定) で provider を配線し UI で生成を絞る。off で従来の静的 spokenKinds 挙動
+  // (env の種別を常時生成) へ即ロールバックできる。既定 on の前提として viewer 登録経路 (Phase 2:
+  // /api/watch ?sub + POST /api/voice/prefs、Phase 3: ブラウザの sub 採番) が揃っている必要がある
+  // (揃っていないと登録 viewer 常にゼロ → 全種別無音)。本リポでは Phase 3 まで実装済みなので既定 on で安全。
+  //
+  // registry / envAllow / uiGating は `/api/watch` (関数スコープ) と server ブロックの両方から参照するため
+  // ここで宣言する。実際に生成を絞る / viewer を数えるのは server モード + uiGating=on のときだけ。
+  const spokenKinds = parseSpokenKinds(process.env.CCM_VOICE_SPOKEN_KINDS);
+  const envAllow = new Set<VoiceEventKind>(spokenKinds);
+  const uiGating = (process.env.CCM_VOICE_UI_GATING ?? 'on') !== 'off';
+  const voiceSubscribers = new VoiceSubscriberRegistry();
+  // effective set が変わったときだけ運用ログを出す (どの種別が生成抑止されているか可視化)。
+  let lastEffectiveKey: string | undefined;
+  const logEffectiveIfChanged = (): void => {
+    const now = Date.now();
+    const key = Array.from(voiceSubscribers.effectiveKinds(envAllow, now)).sort().join(',');
+    if (key === lastEffectiveKey) return;
+    lastEffectiveKey = key;
+    console.log(
+      `[ai-monitor] voice: effective=${key || '(none)'} ` +
+        `(viewers=${voiceSubscribers.size(now)}, env=${[...envAllow].join(',') || '(none)'})`,
+    );
+  };
+
   // 要約が完了したタイミングで購読中の SSE クライアントに通知するためのリスナ集合
   const summaryListeners = new Set<() => void>();
   const summarizer = new Summarizer({
@@ -143,12 +173,17 @@ export function startServer(opts: ServerOptions, source: EntrySource = new Local
       ttsStyle: persona.teacher.ttsStyle,
     });
     const voiceStore = new VoiceStore();
-    const spokenKinds = parseSpokenKinds(process.env.CCM_VOICE_SPOKEN_KINDS);
+    // uiGating=on のとき provider を渡し、handle のゲートで毎回 viewer 希望 (envAllow ∩ union) を参照する。
+    // off のときは provider=undefined → pipeline は静的 spokenKinds に落ちる (完全後方互換)。
+    const spokenKindsProvider = uiGating
+      ? () => voiceSubscribers.effectiveKinds(envAllow, Date.now())
+      : undefined;
     const pipeline = new VoicePipeline({
       persona: personaGen,
       tts,
       store: voiceStore,
       spokenKinds,
+      spokenKindsProvider,
       onUtterance: (u) => {
         // 生成された読み上げテキストをサーバコンソールに出す (logs/voice-server.log にも残る)。
         const time = new Date().toLocaleTimeString('ja-JP', { hour12: false });
@@ -165,7 +200,8 @@ export function startServer(opts: ServerOptions, source: EntrySource = new Local
     console.log(
       `[ai-monitor] voice: persona=${personaGen.isEnabled() ? 'haiku' : 'fallback'} ` +
         `(${persona.teacher.name} & ${persona.student.name}), ` +
-        `tts=${tts.isEnabled() ? tts.tag : 'none'}, spoken=${spokenKinds.join(',')}`,
+        `tts=${tts.isEnabled() ? tts.tag : 'none'}, spoken=${spokenKinds.join(',')}, ` +
+        `ui-gating=${uiGating ? 'on' : 'off'}`,
     );
 
     // クライアント接続状況のログ用。clientId ごとに最終受信時刻を覚え、初回接続と
@@ -224,6 +260,25 @@ export function startServer(opts: ServerOptions, source: EntrySource = new Local
       res.setHeader('Content-Type', 'application/json; charset=utf-8');
       res.json({ utterances: voiceStore.recent(Date.now()) });
     });
+
+    // viewer の音声 prefs (🔊 ON/OFF + 希望種別) を受け取り registry を更新する (UI ゲーティング)。
+    // 同一オリジン (vibeboard customTabs iframe が baseUrl 直叩き) なので CORS 不要。Bearer も不要
+    // (/api/voice/* 既存と同列・本番は Cloudflare Access 配下)。ingest と同様にルート単位で body parse。
+    // uiGating=off では生成を絞らない (provider 未配線) ので、誤解を避けるためマウントしない。
+    if (uiGating) {
+      app.post('/api/voice/prefs', express.json({ limit: '4kb' }), (req: Request, res: Response) => {
+        noStore(res);
+        const prefs = parseVoicePrefsBody(req.body);
+        if (!prefs) {
+          res.status(400).json({ error: 'invalid prefs' });
+          return;
+        }
+        voiceSubscribers.update(prefs.sub, { enabled: prefs.enabled, kinds: prefs.kinds }, Date.now());
+        logEffectiveIfChanged();
+        // effective を返してデバッグ / 将来の UI 表示に使えるようにする。
+        res.json({ effective: Array.from(voiceSubscribers.effectiveKinds(envAllow, Date.now())) });
+      });
+    }
   }
 
   // Phase 1 で追加。ダッシュボード iframe を自己更新化するための軽量 JSON API。
@@ -380,6 +435,21 @@ export function startServer(opts: ServerOptions, source: EntrySource = new Local
     res.setHeader('X-Accel-Buffering', 'no');
     res.flushHeaders?.();
 
+    // viewer 購読 (UI ゲーティング): server モード + uiGating のときだけ、?sub を宣言した接続を
+    // voice viewer として登録する。?sub 無しの接続 (proc 詳細 / sidebar iframe / 旧キャッシュタブ) は
+    // voice viewer に数えない (= それらは生成を生かし続けない)。seed は ?voice(0|1) + ?kinds(csv) から
+    // 作り、prefs POST 到着前の取りこぼしを防ぐ。生存は ping (30s) ごとの touch + close での remove で管理し、
+    // TTL は取りこぼしのバックストップ。
+    // seed の sub 長は prefs 検証 (MAX_SUB_LEN) と揃える (watch で登録できて prefs で弾かれる不整合を防ぐ)。
+    const rawSub = mode === 'server' && uiGating ? String(req.query.sub ?? '') : '';
+    const voiceSub = rawSub.length > 0 && rawSub.length <= MAX_SUB_LEN ? rawSub : '';
+    if (voiceSub) {
+      const seedEnabled = String(req.query.voice ?? '1') !== '0';
+      const seedKinds = String(req.query.kinds ?? '').split(',');
+      voiceSubscribers.register(voiceSub, { enabled: seedEnabled, kinds: seedKinds }, Date.now());
+      logEffectiveIfChanged();
+    }
+
     let alive = true;
     let lastFingerprint = '';
     // id → "<mtimeMs>|<state>" — state も入れることで marker のみで切り替わる
@@ -477,6 +547,8 @@ export function startServer(opts: ServerOptions, source: EntrySource = new Local
     const pingInterval = setInterval(() => {
       if (!alive) return;
       try { res.write(`: ping\n\n`); } catch { /* ignore */ }
+      // ping のたびに生存を更新し、TTL での誤失効を防ぐ (ping=30s < TTL=90s)。
+      if (voiceSub) voiceSubscribers.touch(voiceSub, Date.now());
     }, 30000);
 
     req.on('close', () => {
@@ -486,6 +558,11 @@ export function startServer(opts: ServerOptions, source: EntrySource = new Local
       summaryListeners.delete(onSummaryUpdate);
       voiceListeners.delete(onVoice);
       stopTrigger();
+      // viewer 切断: 即時に登録解除して effective set を縮める (= 生成を絞る)。
+      if (voiceSub) {
+        voiceSubscribers.remove(voiceSub);
+        logEffectiveIfChanged();
+      }
     });
   });
 

@@ -1,5 +1,11 @@
 # DONE
 
+- 2026-06-26: WebUI のボイス種別チェック + 🔊 ON/OFF で **server 側の生成 (Haiku 台本 + Gemini TTS) も止める** UI ゲーティング ([plan](docs/plans/archive/voice-ui-gated-generation.md))
+    - 二層化: 生成 = `envAllow ∩ ∪{接続中 🔊ON viewer の希望種別}` (= effective) / 再生 = 従来どおり viewer 個別 `passes()`。`CCM_VOICE_SPOKEN_KINDS`=天井・UI はその内側で union 集約・🔊ON viewer ゼロ → 無音 (コスト削減の本体・再起動不要/即時反映)。ロールバック弁 `CCM_VOICE_UI_GATING` (on|off・既定 on)
+    - server: 新規 `voice-subscribers.ts` の registry (`effectiveKinds = union ∩ envAllow`・TTL 90s・時刻注入) + `VoicePipeline.spokenKindsProvider` (generate 前ゲートで毎回参照・未指定なら静的 spokenKinds=後方互換)。`/api/watch?sub&voice&kinds` で register/touch(ping)/remove(close) + `POST /api/voice/prefs` (`parseVoicePrefsBody` で厳格検証・同一オリジン) + effective 変化ログ
+    - browser (`views.ts`): viewer 識別子 `sub` を sessionStorage `ccm-voice-sub` で採番 (発話元 `clientId` とは別物)。`?sub` seed つき SSE + onopen(初期/再接続の権威再送)/🔊トグル/種別変更で prefs を POST (端末フィルタ `clientFilter` は送らず `passes()` 不変)
+    - テスト/検証: registry(union∩env/TTL/OFF/remove/sanitize)・prefs 検証・pipeline provider ゲート(空→0件で Haiku/TTS 未呼び出し / 動的反映 / 未指定=後方互換) の unit (計 203 件 green) + server HTTP smoke (register→prefs→close で effective 遷移・off は prefs 404) + DOM stub harness (sub/seed URL/postPrefs)。docs (CLAUDE.md / .env.example ×2) 更新・既定 on へ切替
+
 - 2026-06-21: vibeboard を vendored から upstream clone 取得へ変更 ([plan](docs/plans/archive/vibeboard-customtabs-upstream-and-clone.md))
     - customTabs を upstream vibeboard の汎用機能として実装し **v0.2.0 を公開** (origin/main `fc8c675` + tag `v0.2.0`)。`item-changed` に `reload` フラグを足して `dashboard`/`proc:` ハードコードを除去＝脱 CCM 化し、契約を upstream README に明文化 (並び順=他タブの左・先頭 item 自動選択は固定仕様)
     - CCM: vendored vibeboard 27 ファイルを追跡削除し、`run-ai-monitor.sh` の `ensure_vibeboard` が upstream の pin タグ (`VIBEBOARD_REF` 既定 `v0.2.0`) を clone (HTTPS 既定・ref の pre-flight チェック・一時 dir clone で既存消失防止・移行取り残しの self-heal)。ai-monitor は `reload:false` を送出。CLAUDE.md / .gitignore 更新

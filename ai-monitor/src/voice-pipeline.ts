@@ -93,6 +93,12 @@ export interface VoicePipelineDeps {
    * `started` は要件上どの設定でも読み上げない（既定に含まれない）。
    */
   spokenKinds?: readonly VoiceEventKind[];
+  /**
+   * 動的な読み上げ種別プロバイダ（UI ゲーティング用）。指定すると {@link VoicePipeline.handle} の
+   * ゲートで **毎回これを参照**し、接続中 viewer の希望（env 天井 ∩ viewer union）を即時反映する。
+   * 未指定なら静的 {@link spokenKinds} を使う（= 完全な従来挙動。env のみ運用・既存テストを壊さない）。
+   */
+  spokenKindsProvider?: () => ReadonlySet<VoiceEventKind>;
   /** 処理済み eventId を覚えておく TTL(ms)。既定 {@link DEFAULT_SEEN_EVENT_TTL_MS}。 */
   seenEventTtlMs?: number;
   /** 処理済み eventId の保持件数上限。既定 {@link DEFAULT_SEEN_EVENT_MAX}。 */
@@ -110,6 +116,8 @@ export class VoicePipeline {
   private readonly now: () => number;
   private readonly onUtterance: (u: Utterance) => void;
   private readonly spokenKinds: ReadonlySet<VoiceEventKind>;
+  /** 動的な読み上げ種別プロバイダ（UI ゲーティング）。未指定なら静的 {@link spokenKinds} を使う。 */
+  private readonly spokenKindsProvider?: () => ReadonlySet<VoiceEventKind>;
   /** lost-ack 再送 (同一 eventId) の二重生成を防ぐ冪等セット。 */
   private readonly seen: SeenEventIds;
   /** {@link enqueue} の直列化チェーン。前イベントの全 utterance を出し切ってから次へ。 */
@@ -122,6 +130,7 @@ export class VoicePipeline {
     this.now = deps.now ?? (() => Date.now());
     this.onUtterance = deps.onUtterance ?? (() => { /* noop */ });
     this.spokenKinds = new Set(deps.spokenKinds ?? SPOKEN_KINDS);
+    this.spokenKindsProvider = deps.spokenKindsProvider;
     this.seen = new SeenEventIds(deps.seenEventTtlMs, deps.seenEventMax);
   }
 
@@ -144,7 +153,10 @@ export class VoicePipeline {
 
   async handle(event: VoiceEventPayload): Promise<Utterance[]> {
     try {
-      if (!this.spokenKinds.has(event.kind)) return [];
+      // 生成抑止ゲート: provider があれば毎回参照（接続中 viewer の希望を即時反映）、
+      // 無ければ従来の静的 spokenKinds（env のみ運用・後方互換）。
+      const spoken = this.spokenKindsProvider ? this.spokenKindsProvider() : this.spokenKinds;
+      if (!spoken.has(event.kind)) return [];
 
       // 冪等化: 同一 eventId を 2 度処理しない (lost-ack 再送 / 二重 ingest を吸収)。
       // eventId 欠落 (旧クライアント) は dedup せず従来どおり生成する (取りこぼしより重複許容)。
